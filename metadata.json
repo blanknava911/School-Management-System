@@ -1,0 +1,6 @@
+{
+  "name": "School Assessment Management Platform",
+  "description": "Enterprise multi-tenant school assessment platform foundation with isolated school environments, administrative wizards, user role management, and super admin inspection.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
