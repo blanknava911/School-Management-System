@@ -1,147 +1,102 @@
 import React, { useState } from 'react';
-import { useAuth } from '../../context/AuthContext';
-import { Building2, X, Lock, Mail, ArrowRight, AlertCircle, Sparkles } from 'lucide-react';
+import { ArrowRight, GraduationCap, Lock, Mail, ShieldCheck, X } from 'lucide-react';
 
-interface SchoolLoginModalProps {
+import { useAuth } from '../../context/AuthContext';
+
+interface UnifiedLoginModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
 }
 
-export const SchoolLoginModal: React.FC<SchoolLoginModalProps> = ({ isOpen, onClose, onSuccess }) => {
+export const UnifiedLoginModal: React.FC<UnifiedLoginModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const { login, isLoading, error, clearError } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
   if (!isOpen) return null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    console.log('[SchoolLoginModal] Submitting login credentials:', { email });
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     try {
       await login(email, password);
-      console.log('[SchoolLoginModal] Login succeeded, triggering onSuccess callback');
       onSuccess();
-    } catch (err: any) {
-      console.warn('[SchoolLoginModal] Login failed:', err?.message || err);
-      // error is handled in context
+    } catch {
+      // AuthContext exposes the server error above the form.
     }
   };
 
-  const setDemoAccount = (demoEmail: string, demoPass: string) => {
-    console.log('[SchoolLoginModal] Quick-selecting demo account:', demoEmail);
-    clearError();
-    setEmail(demoEmail);
-    setPassword(demoPass);
-  };
-
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl max-w-md w-full p-6 sm:p-8 shadow-2xl relative border border-slate-200">
+    <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-slate-700 bg-slate-900 text-white shadow-2xl">
+        <div className="h-1.5 bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-400" />
         <button
-          onClick={onClose}
-          className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
+          aria-label="Close login"
+          onClick={() => { clearError(); onClose(); }}
+          className="absolute right-4 top-5 rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white"
         >
-          <X className="w-5 h-5" />
+          <X className="h-5 w-5" />
         </button>
 
-        <div className="flex items-center space-x-3 mb-6">
-          <div className="p-3 bg-indigo-600 text-white rounded-xl">
-            <Building2 className="w-6 h-6" />
-          </div>
-          <div>
-            <h2 className="text-xl font-bold text-slate-900">School Login</h2>
-            <p className="text-xs text-slate-500">Access your school's private workspace</p>
-          </div>
-        </div>
-
-        {error && (
-          <div className="mb-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs rounded-lg flex items-start space-x-2">
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">School Email Address</label>
-            <div className="relative">
-              <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                placeholder="admin@apex.edu"
-                className="w-full pl-9 pr-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-              />
+        <div className="p-7 sm:p-9">
+          <div className="mb-7 flex items-center gap-3">
+            <div className="rounded-2xl bg-indigo-600 p-3 shadow-lg shadow-indigo-600/30">
+              <GraduationCap className="h-7 w-7" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-black">Sign in</h2>
+              <p className="text-sm text-slate-400">One secure login for every account</p>
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">Password</label>
-            <div className="relative">
-              <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full pl-9 pr-3 py-2.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
-              />
-            </div>
+          <div className="mb-6 flex gap-2 rounded-xl border border-slate-700 bg-slate-950/60 p-3 text-xs text-slate-300">
+            <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+            <span>Your account role is detected automatically after your credentials are verified.</span>
           </div>
 
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-lg transition-colors shadow-md shadow-indigo-600/20 flex items-center justify-center space-x-2 disabled:opacity-50"
-          >
-            {isLoading ? <span>Logging in...</span> : <><span>Login to School</span> <ArrowRight className="w-4 h-4" /></>}
-          </button>
-        </form>
+          {error && <div className="mb-4 rounded-xl border border-rose-800 bg-rose-950/60 p-3 text-sm text-rose-200">{error}</div>}
 
-        {/* Demo Account Quick-Fill Buttons */}
-        <div className="mt-6 pt-4 border-t border-slate-100">
-          <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center space-x-1">
-            <Sparkles className="w-3 h-3 text-indigo-500" />
-            <span>Quick Demo Credentials</span>
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-xs">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-400">Email address</span>
+              <span className="relative block">
+                <Mail className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500" />
+                <input
+                  autoFocus
+                  type="email"
+                  required
+                  value={email}
+                  onChange={event => { clearError(); setEmail(event.target.value); }}
+                  placeholder="you@school.edu"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 py-3 pl-10 pr-4 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+                />
+              </span>
+            </label>
+
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-slate-400">Password</span>
+              <span className="relative block">
+                <Lock className="absolute left-3.5 top-3.5 h-4 w-4 text-slate-500" />
+                <input
+                  type="password"
+                  required
+                  value={password}
+                  onChange={event => { clearError(); setPassword(event.target.value); }}
+                  placeholder="Enter your password"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 py-3 pl-10 pr-4 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/30"
+                />
+              </span>
+            </label>
+
             <button
-              type="button"
-              onClick={() => setDemoAccount('admin@apexprimary.edu.za', 'apex123')}
-              className="p-2 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-lg text-left transition-colors cursor-pointer"
+              type="submit"
+              disabled={isLoading}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 py-3.5 text-sm font-black hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <div className="font-bold text-slate-800">Apex Admin</div>
-              <div className="text-[10px] text-slate-500 truncate">admin@apexprimary.edu.za</div>
+              <span>{isLoading ? 'Checking account…' : 'Continue'}</span>
+              {!isLoading && <ArrowRight className="h-4 w-4" />}
             </button>
-            <button
-              type="button"
-              onClick={() => setDemoAccount('principal@apexprimary.edu.za', 'apex123')}
-              className="p-2 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-lg text-left transition-colors cursor-pointer"
-            >
-              <div className="font-bold text-slate-800">Apex Principal</div>
-              <div className="text-[10px] text-slate-500 truncate">principal@apexprimary.edu.za</div>
-            </button>
-            <button
-              type="button"
-              onClick={() => setDemoAccount('m.smith@apexprimary.edu.za', 'apex123')}
-              className="p-2 bg-slate-50 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-300 rounded-lg text-left transition-colors cursor-pointer"
-            >
-              <div className="font-bold text-slate-800">Apex Educator</div>
-              <div className="text-[10px] text-slate-500 truncate">m.smith@apexprimary.edu.za</div>
-            </button>
-            <button
-              type="button"
-              onClick={() => setDemoAccount('admin@stjudeprimary.edu.za', 'stjude123')}
-              className="p-2 bg-slate-50 hover:bg-purple-50 border border-slate-200 hover:border-purple-300 rounded-lg text-left transition-colors cursor-pointer"
-            >
-              <div className="font-bold text-slate-800">St. Jude Admin</div>
-              <div className="text-[10px] text-slate-500 truncate">admin@stjudeprimary.edu.za</div>
-            </button>
-          </div>
+          </form>
         </div>
       </div>
     </div>

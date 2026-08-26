@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
@@ -13,8 +14,8 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ limit: '10mb', extended: true }));
+  app.use(express.json({ limit: '15mb' }));
+  app.use(express.urlencoded({ limit: '15mb', extended: true }));
 
   // --- API ROUTES ---
 
@@ -68,6 +69,77 @@ async function startServer() {
       school,
       token: `mock-jwt-token-${user.id}-${Date.now()}`
     });
+  });
+
+  const uploadsRoot = path.join(process.cwd(), 'data', 'student-uploads');
+  const getUserById = (userId: string) => db.getUsers(null).find(user => user.id === userId);
+  const canAccessStudent = (actorUserId: string, studentId: string) => {
+    const actor = getUserById(actorUserId);
+    const student = getUserById(studentId);
+    if (!actor || !student || student.role !== 'STUDENT') return false;
+    if (actor.role === 'SUPER_ADMIN') return true;
+    if (actor.schoolId !== student.schoolId) return false;
+    if (actor.id === student.id) return true;
+    if (actor.role === 'TEACHER') return student.teacherUserId === actor.id;
+    return ['SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD', 'GRADE_HEAD'].includes(actor.role);
+  };
+  const readUploadIndex = (studentId: string) => {
+    const indexPath = path.join(uploadsRoot, studentId, 'index.json');
+    if (!fs.existsSync(indexPath)) return [] as any[];
+    return JSON.parse(fs.readFileSync(indexPath, 'utf8')) as any[];
+  };
+
+  app.get('/api/students/:studentId/uploads', (req, res) => {
+    const actorUserId = String(req.query.actorUserId || '');
+    if (!canAccessStudent(actorUserId, req.params.studentId)) {
+      return res.status(403).json({ error: 'You do not have access to this student.' });
+    }
+    res.json(readUploadIndex(req.params.studentId));
+  });
+
+  app.post('/api/students/:studentId/uploads', (req, res) => {
+    const { actorUserId, name, mimeType, dataBase64 } = req.body;
+    const { studentId } = req.params;
+    if (!canAccessStudent(String(actorUserId || ''), studentId)) {
+      return res.status(403).json({ error: 'You do not have access to this student.' });
+    }
+    if (!name || !dataBase64) return res.status(400).json({ error: 'A file is required.' });
+
+    const data = Buffer.from(dataBase64, 'base64');
+    if (data.length > 10 * 1024 * 1024) {
+      return res.status(413).json({ error: 'Files must be 10 MB or smaller.' });
+    }
+
+    const studentDir = path.join(uploadsRoot, studentId);
+    fs.mkdirSync(studentDir, { recursive: true });
+    const id = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const safeExtension = path.extname(String(name)).replace(/[^.a-zA-Z0-9]/g, '').slice(0, 12);
+    fs.writeFileSync(path.join(studentDir, `${id}${safeExtension}`), data);
+
+    const upload = {
+      id,
+      name: path.basename(String(name)),
+      mimeType: String(mimeType || 'application/octet-stream'),
+      size: data.length,
+      uploadedAt: new Date().toISOString(),
+      downloadUrl: `/api/students/${studentId}/uploads/${id}/download`,
+      storedName: `${id}${safeExtension}`,
+    };
+    const uploads = [upload, ...readUploadIndex(studentId)];
+    fs.writeFileSync(path.join(studentDir, 'index.json'), JSON.stringify(uploads, null, 2), 'utf8');
+    const { storedName, ...publicUpload } = upload;
+    res.status(201).json(publicUpload);
+  });
+
+  app.get('/api/students/:studentId/uploads/:uploadId/download', (req, res) => {
+    const actorUserId = String(req.query.actorUserId || '');
+    const { studentId, uploadId } = req.params;
+    if (!canAccessStudent(actorUserId, studentId)) {
+      return res.status(403).json({ error: 'You do not have access to this student.' });
+    }
+    const upload = readUploadIndex(studentId).find(item => item.id === uploadId);
+    if (!upload) return res.status(404).json({ error: 'Upload not found.' });
+    res.download(path.join(uploadsRoot, studentId, upload.storedName), upload.name);
   });
 
   // School Registration Wizard Endpoint
@@ -268,7 +340,7 @@ async function startServer() {
   // Create User in a School
   app.post('/api/schools/:schoolId/users', (req, res) => {
     const { schoolId } = req.params;
-    const { actorUser, fullName, email, role, roles, password } = req.body;
+    const { actorUser, fullName, email, role, roles, password, teacherUserId } = req.body;
 
     if (!fullName || !email || (!role && (!roles || roles.length === 0))) {
       return res.status(400).json({ error: 'Full name, email, and role are required' });
@@ -282,6 +354,7 @@ async function startServer() {
       HOD: 5,
       GRADE_HEAD: 6,
       TEACHER: 7,
+      STUDENT: 8,
     };
 
     const userRoles: string[] = Array.isArray(roles) && roles.length > 0 ? roles : (role ? [role] : ['TEACHER']);
@@ -295,6 +368,7 @@ async function startServer() {
         email,
         role: highestAuthorityRole,
         roles: userRoles as any,
+        teacherUserId: highestAuthorityRole === 'STUDENT' ? teacherUserId : undefined,
         status: 'Active',
       },
       password || 'staff123'

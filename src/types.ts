@@ -5,7 +5,8 @@ export type Role =
   | 'DEPUTY_PRINCIPAL'
   | 'HOD'
   | 'GRADE_HEAD'
-  | 'TEACHER';
+  | 'TEACHER'
+  | 'STUDENT';
 
 export type SchoolType = 'Primary School' | 'Secondary School' | 'Combined School' | 'Public' | 'Private' | 'Academy' | 'International' | 'Charter';
 
@@ -50,6 +51,7 @@ export interface User {
   roles?: Role[]; // Multi-role support (e.g. ['PRINCIPAL', 'TEACHER'])
   departmentIds?: string[];
   gradeIds?: string[];
+  teacherUserId?: string;
   status: 'Active' | 'Pending Setup' | 'Inactive' | 'Disabled';
   createdAt: string;
   lastLogin?: string;

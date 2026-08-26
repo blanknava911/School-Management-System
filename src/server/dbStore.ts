@@ -231,6 +231,19 @@ export class DatabaseStore {
     this.users.set(teacherMthembu.id, teacherMthembu);
     this.userPasswords.set(teacherMthembu.id, 'apex123');
 
+    const studentDube: User = {
+      id: 'usr-apex-student-dube',
+      schoolId: 'SCH-1001',
+      teacherUserId: teacherSmith.id,
+      fullName: 'Lerato Dube',
+      email: 'lerato.dube@apexprimary.edu.za',
+      role: 'STUDENT',
+      status: 'Active',
+      createdAt: '2026-01-13T08:00:00.000Z',
+    };
+    this.users.set(studentDube.id, studentDube);
+    this.userPasswords.set(studentDube.id, 'student123');
+
     // Seed South African Primary School Structure for SCH-1001
     this.initializePrimarySchoolAcademicStructure('SCH-1001');
 
@@ -1305,4 +1318,3 @@ export class DatabaseStore {
 }
 
 export const db = new DatabaseStore();
-

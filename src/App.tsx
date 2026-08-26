@@ -3,8 +3,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { Header } from './components/common/Header';
 import { Sidebar } from './components/common/Sidebar';
 import { LandingPage } from './components/landing/LandingPage';
-import { SchoolLoginModal } from './components/auth/SchoolLoginModal';
-import { PlatformLoginModal } from './components/auth/PlatformLoginModal';
+import { UnifiedLoginModal } from './components/auth/SchoolLoginModal';
 import { SchoolRegistrationWizard } from './components/wizard/SchoolRegistrationWizard';
 import { FirstTimeSetupWizard } from './components/wizard/FirstTimeSetupWizard';
 import { SchoolDashboard } from './components/dashboard/SchoolDashboard';
@@ -21,6 +20,7 @@ import { KnowledgeHubView } from './components/knowledge/KnowledgeHubView';
 import { TemplatesView } from './components/templates/TemplatesView';
 import { AssessmentArchiveView } from './components/archive/AssessmentArchiveView';
 import { ReportsView } from './components/reports/ReportsView';
+import { StudentWorkspace } from './components/students/StudentWorkspace';
 
 function MainLayout() {
   const { currentUser, activeSchool, superAdminInspectingSchool, refreshSchoolData } = useAuth();
@@ -29,8 +29,7 @@ function MainLayout() {
 
   // Modal Dialog states
   const [isRegisterWizardOpen, setIsRegisterWizardOpen] = useState<boolean>(false);
-  const [isSchoolLoginOpen, setIsSchoolLoginOpen] = useState<boolean>(false);
-  const [isPlatformLoginOpen, setIsPlatformLoginOpen] = useState<boolean>(false);
+  const [isLoginOpen, setIsLoginOpen] = useState<boolean>(false);
   const [showManualSetupWizard, setShowManualSetupWizard] = useState<boolean>(false);
 
   // If user is not logged in, render the Landing Page
@@ -38,35 +37,15 @@ function MainLayout() {
     return (
       <>
         <LandingPage
-          onOpenRegisterWizard={() => setIsRegisterWizardOpen(true)}
-          onOpenSchoolLogin={() => setIsSchoolLoginOpen(true)}
-          onOpenPlatformLogin={() => setIsPlatformLoginOpen(true)}
+          onOpenLogin={() => setIsLoginOpen(true)}
         />
 
-        <SchoolRegistrationWizard
-          isOpen={isRegisterWizardOpen}
-          onClose={() => setIsRegisterWizardOpen(false)}
+        <UnifiedLoginModal
+          isOpen={isLoginOpen}
+          onClose={() => setIsLoginOpen(false)}
           onSuccess={() => {
-            setIsRegisterWizardOpen(false);
+            setIsLoginOpen(false);
             setActiveTab('dashboard');
-          }}
-        />
-
-        <SchoolLoginModal
-          isOpen={isSchoolLoginOpen}
-          onClose={() => setIsSchoolLoginOpen(false)}
-          onSuccess={() => {
-            setIsSchoolLoginOpen(false);
-            setActiveTab('dashboard');
-          }}
-        />
-
-        <PlatformLoginModal
-          isOpen={isPlatformLoginOpen}
-          onClose={() => setIsPlatformLoginOpen(false)}
-          onSuccess={() => {
-            setIsPlatformLoginOpen(false);
-            setActiveTab('superadmin-dashboard');
           }}
         />
       </>
@@ -90,6 +69,9 @@ function MainLayout() {
 
   // Determine active view tab
   const renderContent = () => {
+    if (currentUser.role === 'STUDENT') {
+      return <StudentWorkspace />;
+    }
     // Super Admin platform mode tabs
     if (currentUser.role === 'SUPER_ADMIN' && !superAdminInspectingSchool) {
       if (activeTab === 'superadmin-audit') {
