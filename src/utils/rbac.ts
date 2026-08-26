@@ -65,6 +65,12 @@ export const ROLE_HIERARCHY: RoleInfo[] = [
     purpose: 'Creates assessment workspaces, uploads question papers & memorandums, and manages resources.',
     rank: 7,
   },
+  {
+    role: 'STUDENT',
+    title: 'Student',
+    purpose: 'Uploads personal work and views feedback shared with their account.',
+    rank: 8,
+  },
 ];
 
 /**
@@ -91,6 +97,7 @@ export function getHighestRole(roles: Role[]): Role {
     HOD: 5,
     GRADE_HEAD: 6,
     TEACHER: 7,
+    STUDENT: 8,
   };
   return [...roles].sort((a, b) => (roleRanks[a] || 99) - (roleRanks[b] || 99))[0];
 }
@@ -123,7 +130,7 @@ export function canAccessModule(user: User | null, module: ModuleName): boolean 
         return role === 'SUPER_ADMIN' || role === 'SCHOOL_ADMIN';
 
       case 'users':
-        return role === 'SUPER_ADMIN' || role === 'SCHOOL_ADMIN' || role === 'PRINCIPAL';
+        return role === 'SUPER_ADMIN' || role === 'SCHOOL_ADMIN' || role === 'PRINCIPAL' || role === 'TEACHER';
 
       case 'school_profile':
         return (
@@ -155,10 +162,12 @@ export function canAccessModule(user: User | null, module: ModuleName): boolean 
       case 'grades':
       case 'subjects':
       case 'teaching_assignments':
+      case 'reports':
+        return role !== 'STUDENT';
+
       case 'assessment_workspace':
       case 'knowledge_hub':
-      case 'reports':
-        return true; // Accessible across all staff roles, with internal scoped actions
+        return role !== 'STUDENT';
 
       default:
         return false;
@@ -192,7 +201,7 @@ export function canManageSchoolSettings(user: User | null): boolean {
 }
 
 export function canCreateAssessmentWorkspace(user: User | null): boolean {
-  return hasRole(user, ['TEACHER', 'GRADE_HEAD', 'HOD', 'DEPUTY_PRINCIPAL', 'PRINCIPAL', 'SUPER_ADMIN']);
+  return hasRole(user, ['TEACHER', 'GRADE_HEAD', 'HOD', 'DEPUTY_PRINCIPAL', 'PRINCIPAL', 'SCHOOL_ADMIN', 'SUPER_ADMIN']);
 }
 
 export function canReviewAssessment(user: User | null): boolean {
