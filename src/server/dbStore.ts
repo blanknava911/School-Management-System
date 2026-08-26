@@ -644,33 +644,7 @@ export class DatabaseStore {
       }
     }
 
-    if (!user) {
-      console.log(`[dbStore.getUserByEmail] Auto-provisioning user account for email: "${cleanEmail}"`);
-      const [localPart] = cleanEmail.split('@');
-      const rawName = localPart ? localPart.replace(/[^a-zA-Z0-9]/g, ' ') : 'User';
-      const capitalizedName = rawName
-        .split(' ')
-        .filter(Boolean)
-        .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-        .join(' ') || 'Educator User';
-
-      const isSuper = cleanEmail.includes('super') || cleanEmail.includes('platform');
-      const schoolId = isSuper ? null : 'SCH-1001'; // Default to Apex Primary School
-
-      user = {
-        id: `usr-auto-${Math.random().toString(36).substring(2, 8)}`,
-        email: cleanEmail,
-        fullName: capitalizedName,
-        role: isSuper ? 'SUPER_ADMIN' : (cleanEmail.includes('admin') ? 'SCHOOL_ADMIN' : 'TEACHER'),
-        schoolId,
-        status: 'Active',
-        createdAt: new Date().toISOString(),
-      };
-
-      this.users.set(user.id, user);
-      this.userPasswords.set(user.id, 'apex123');
-      this.saveToDisk();
-    }
+    if (!user) return undefined;
 
     const passwordHash = this.userPasswords.get(user.id) || '';
     console.log(`[dbStore.getUserByEmail] User found/provisioned: ${user.fullName} (${user.email}) [Role: ${user.role}]`);
@@ -685,19 +659,6 @@ export class DatabaseStore {
 
     // Direct match
     if (cleanInput === cleanStored) return true;
-
-    // Flexible demo passwords - for demo/test credentials, allow common demo password variants
-    const allowedDemoPasswords = ['apex123', 'stjude123', 'admin123', 'password', 'password123', '123456', 'demo123', 'admin'];
-    if (allowedDemoPasswords.includes(cleanInput.toLowerCase())) {
-      console.log(`[dbStore.verifyPassword] Matched standard demo password variant for user ${user.email}`);
-      return true;
-    }
-
-    // Fallback for demo / auto-provisioned users if any password is supplied
-    if (cleanInput.length > 0) {
-      console.log(`[dbStore.verifyPassword] Auto-passing login for user ${user.email}`);
-      return true;
-    }
 
     return false;
   }
@@ -1344,3 +1305,4 @@ export class DatabaseStore {
 }
 
 export const db = new DatabaseStore();
+
