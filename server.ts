@@ -268,7 +268,7 @@ async function startServer() {
   // Create User in a School
   app.post('/api/schools/:schoolId/users', (req, res) => {
     const { schoolId } = req.params;
-    const { actorUser, fullName, email, role, roles, password } = req.body;
+    const { actorUser, fullName, email, role, roles, password, teacherUserId } = req.body;
 
     if (!fullName || !email || (!role && (!roles || roles.length === 0))) {
       return res.status(400).json({ error: 'Full name, email, and role are required' });
@@ -282,6 +282,7 @@ async function startServer() {
       HOD: 5,
       GRADE_HEAD: 6,
       TEACHER: 7,
+      STUDENT: 8,
     };
 
     const userRoles: string[] = Array.isArray(roles) && roles.length > 0 ? roles : (role ? [role] : ['TEACHER']);
@@ -295,6 +296,7 @@ async function startServer() {
         email,
         role: highestAuthorityRole,
         roles: userRoles as any,
+        teacherUserId: highestAuthorityRole === 'STUDENT' ? teacherUserId : undefined,
         status: 'Active',
       },
       password || 'staff123'
