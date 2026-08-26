@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { FileText, GraduationCap, UploadCloud } from 'lucide-react';
 
 import { useAuth } from '../../context/AuthContext';
@@ -8,40 +8,60 @@ interface StudentFile {
   name: string;
   size: number;
   uploadedAt: string;
+  downloadUrl: string;
 }
 
 export const StudentWorkspace: React.FC = () => {
   const { currentUser, activeSchool } = useAuth();
-  const storageKey = `student-files:${currentUser?.id || 'anonymous'}`;
-  const [files, setFiles] = useState<StudentFile[]>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(storageKey) || '[]');
-    } catch {
-      return [];
-    }
-  });
+  const [files, setFiles] = useState<StudentFile[]>([]);
   const [message, setMessage] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    fetch(`/api/students/${currentUser.id}/uploads?actorUserId=${encodeURIComponent(currentUser.id)}`)
+      .then(async response => {
+        if (!response.ok) throw new Error((await response.json()).error || 'Could not load uploads.');
+        return response.json();
+      })
+      .then(setFiles)
+      .catch(error => setMessage(error.message));
+  }, [currentUser]);
 
   const totalSize = useMemo(() => files.reduce((sum, file) => sum + file.size, 0), [files]);
 
-  const handleUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file) return;
+    if (!file || !currentUser) return;
     if (file.size > 10 * 1024 * 1024) {
       setMessage('Files must be 10 MB or smaller.');
       return;
     }
 
-    const updated = [{
-      id: crypto.randomUUID(),
-      name: file.name,
-      size: file.size,
-      uploadedAt: new Date().toISOString(),
-    }, ...files];
-    setFiles(updated);
-    localStorage.setItem(storageKey, JSON.stringify(updated));
-    setMessage(`${file.name} uploaded successfully.`);
-    event.target.value = '';
+    setIsUploading(true);
+    setMessage('Uploading...');
+    try {
+      const dataBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+        reader.onerror = () => reject(new Error('Could not read the selected file.'));
+        reader.readAsDataURL(file);
+      });
+      const response = await fetch(`/api/students/${currentUser.id}/uploads`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actorUserId: currentUser.id, name: file.name, mimeType: file.type, dataBase64 }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Upload failed.');
+      setFiles(current => [result, ...current]);
+      setMessage(`${file.name} uploaded successfully.`);
+    } catch (error: any) {
+      setMessage(error.message || 'Upload failed.');
+    } finally {
+      setIsUploading(false);
+      event.target.value = '';
+    }
   };
 
   return (
@@ -61,9 +81,9 @@ export const StudentWorkspace: React.FC = () => {
           <p className="mt-1 text-sm text-slate-500">Choose a document from your device. Maximum size: 10 MB.</p>
           <label className="mt-6 flex cursor-pointer flex-col items-center rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50/60 px-5 py-10 text-center hover:border-indigo-400">
             <UploadCloud className="h-9 w-9 text-indigo-600" />
-            <span className="mt-3 font-bold text-indigo-950">Choose a file</span>
+            <span className="mt-3 font-bold text-indigo-950">{isUploading ? 'Uploading...' : 'Choose a file'}</span>
             <span className="mt-1 text-xs text-indigo-500">PDF, Word, image, or other school document</span>
-            <input type="file" className="sr-only" onChange={handleUpload} />
+            <input type="file" className="sr-only" onChange={handleUpload} disabled={isUploading} />
           </label>
           {message && <div className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm font-medium text-emerald-700">{message}</div>}
         </section>
@@ -79,13 +99,13 @@ export const StudentWorkspace: React.FC = () => {
             {files.length === 0 ? (
               <div className="rounded-2xl bg-slate-50 py-12 text-center text-sm text-slate-500">No files uploaded yet.</div>
             ) : files.map(file => (
-              <div key={file.id} className="flex items-center gap-3 rounded-xl border border-slate-200 p-4">
+              <a key={file.id} href={`${file.downloadUrl}?actorUserId=${encodeURIComponent(currentUser?.id || '')}`} className="flex items-center gap-3 rounded-xl border border-slate-200 p-4 hover:border-indigo-300">
                 <div className="rounded-lg bg-indigo-50 p-2 text-indigo-600"><FileText className="h-5 w-5" /></div>
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-bold text-slate-800">{file.name}</div>
                   <div className="text-xs text-slate-500">{new Date(file.uploadedAt).toLocaleString()} · {(file.size / 1024).toFixed(1)} KB</div>
                 </div>
-              </div>
+              </a>
             ))}
           </div>
         </section>
