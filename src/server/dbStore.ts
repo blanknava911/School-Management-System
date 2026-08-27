@@ -16,6 +16,8 @@ import {
   AcademicAssignment,
   AssessmentWorkspace,
   KnowledgeResource,
+  StudentRecord,
+  StudentMark,
 } from '../types.js';
 
 // Pre-seeded multi-tenant storage with Disk Persistence
@@ -35,6 +37,8 @@ export class DatabaseStore {
   private academicAssignments: Map<string, AcademicAssignment> = new Map();
   private assessmentWorkspaces: Map<string, AssessmentWorkspace> = new Map();
   private knowledgeResources: Map<string, KnowledgeResource> = new Map();
+  private students: Map<string, StudentRecord> = new Map();
+  private studentMarks: Map<string, StudentMark> = new Map();
   private auditLogs: AuditLog[] = [];
 
   constructor() {
@@ -69,6 +73,8 @@ export class DatabaseStore {
         academicAssignments: Array.from(this.academicAssignments.entries()),
         assessmentWorkspaces: Array.from(this.assessmentWorkspaces.entries()),
         knowledgeResources: Array.from(this.knowledgeResources.entries()),
+        students: Array.from(this.students.entries()),
+        studentMarks: Array.from(this.studentMarks.entries()),
         auditLogs: this.auditLogs,
       };
       fs.writeFileSync(dbFilePath, JSON.stringify(dump, null, 2), 'utf-8');
@@ -100,7 +106,17 @@ export class DatabaseStore {
       if (Array.isArray(dump.academicAssignments)) this.academicAssignments = new Map(dump.academicAssignments);
       if (Array.isArray(dump.assessmentWorkspaces)) this.assessmentWorkspaces = new Map(dump.assessmentWorkspaces);
       if (Array.isArray(dump.knowledgeResources)) this.knowledgeResources = new Map(dump.knowledgeResources);
+      if (Array.isArray(dump.students)) this.students = new Map(dump.students);
+      if (Array.isArray(dump.studentMarks)) this.studentMarks = new Map(dump.studentMarks);
       if (Array.isArray(dump.auditLogs)) this.auditLogs = dump.auditLogs;
+
+      // Students are academic records, never login accounts. Remove legacy student users.
+      for (const [id, user] of this.users.entries()) {
+        if ((user.role as string) === 'STUDENT') {
+          this.users.delete(id);
+          this.userPasswords.delete(id);
+        }
+      }
 
       console.log(`[dbStore] Persistent database state restored: ${this.schools.size} schools, ${this.users.size} users, ${this.assessmentWorkspaces.size} assessment workspaces, ${this.knowledgeResources.size} knowledge hub resources.`);
       return true;
@@ -231,19 +247,6 @@ export class DatabaseStore {
     this.users.set(teacherMthembu.id, teacherMthembu);
     this.userPasswords.set(teacherMthembu.id, 'apex123');
 
-    const studentDube: User = {
-      id: 'usr-apex-student-dube',
-      schoolId: 'SCH-1001',
-      teacherUserId: teacherSmith.id,
-      fullName: 'Lerato Dube',
-      email: 'lerato.dube@apexprimary.edu.za',
-      role: 'STUDENT',
-      status: 'Active',
-      createdAt: '2026-01-13T08:00:00.000Z',
-    };
-    this.users.set(studentDube.id, studentDube);
-    this.userPasswords.set(studentDube.id, 'student123');
-
     // Seed South African Primary School Structure for SCH-1001
     this.initializePrimarySchoolAcademicStructure('SCH-1001');
 
@@ -363,6 +366,21 @@ export class DatabaseStore {
         academicYear: '2026',
       });
     }
+
+    const seedRoster = (gradeId: string | undefined, classId: string | undefined, names: string[]) => {
+      if (!gradeId || !classId) return;
+      names.forEach((fullName, index) => this.createStudent('SCH-1001', {
+        admissionNumber: `APX-${gradeId.slice(-4).toUpperCase()}-${String(index + 1).padStart(3, '0')}`,
+        fullName,
+        gradeId,
+        classId,
+        status: 'Active',
+      }));
+    };
+    seedRoster(gr2?.id, cls2a?.id, ['Lerato Dube', 'Amara Nkosi', 'Thando Mokoena', 'Naledi Khumalo']);
+    seedRoster(gr3?.id, cls3a?.id, ['Sipho Ndlovu', 'Mia Jacobs', 'Ayanda Cele']);
+    seedRoster(gr4?.id, cls4a?.id, ['Kagiso Molefe', 'Zoe Daniels', 'Lethabo Maseko']);
+    seedRoster(gr7?.id, cls7a?.id, ['Neo Modise', 'Ava Naidoo', 'Tshepo Mhlongo', 'Emma Botha']);
 
     // Seed Sample Assessment Workspaces
     if (fp && gr2 && mathFP) {
@@ -1248,6 +1266,83 @@ export class DatabaseStore {
     }
     this.saveToDisk();
     return true;
+  }
+
+  // --- STUDENT ROSTERS & MARKS ---
+  public getStudents(schoolId: string, classId?: string): StudentRecord[] {
+    return Array.from(this.students.values())
+      .filter(student => student.schoolId === schoolId && (!classId || student.classId === classId))
+      .sort((a, b) => a.fullName.localeCompare(b.fullName));
+  }
+
+  public getStudentById(studentId: string): StudentRecord | undefined {
+    return this.students.get(studentId);
+  }
+
+  public createStudent(
+    schoolId: string,
+    payload: Omit<StudentRecord, 'id' | 'schoolId' | 'createdAt'>
+  ): StudentRecord {
+    const duplicate = this.getStudents(schoolId).find(student =>
+      student.admissionNumber.toLowerCase() === payload.admissionNumber.toLowerCase()
+    );
+    if (duplicate) throw new Error('A student with this admission number already exists.');
+    const student: StudentRecord = {
+      ...payload,
+      id: `stu-${Math.random().toString(36).substring(2, 10)}`,
+      schoolId,
+      createdAt: new Date().toISOString(),
+    };
+    this.students.set(student.id, student);
+    this.saveToDisk();
+    return student;
+  }
+
+  public updateStudent(schoolId: string, studentId: string, updates: Partial<StudentRecord>): StudentRecord {
+    const existing = this.students.get(studentId);
+    if (!existing || existing.schoolId !== schoolId) throw new Error('Student not found.');
+    const updated = { ...existing, ...updates, id: existing.id, schoolId: existing.schoolId };
+    this.students.set(studentId, updated);
+    this.saveToDisk();
+    return updated;
+  }
+
+  public deleteStudent(schoolId: string, studentId: string): boolean {
+    const existing = this.students.get(studentId);
+    if (!existing || existing.schoolId !== schoolId) return false;
+    this.students.delete(studentId);
+    for (const [markId, mark] of this.studentMarks.entries()) {
+      if (mark.studentId === studentId) this.studentMarks.delete(markId);
+    }
+    this.saveToDisk();
+    return true;
+  }
+
+  public getStudentMarks(schoolId: string, filter: { studentId?: string; teachingAssignmentId?: string } = {}): StudentMark[] {
+    return Array.from(this.studentMarks.values())
+      .filter(mark => mark.schoolId === schoolId)
+      .filter(mark => !filter.studentId || mark.studentId === filter.studentId)
+      .filter(mark => !filter.teachingAssignmentId || mark.teachingAssignmentId === filter.teachingAssignmentId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  public saveStudentMarks(
+    schoolId: string,
+    rows: Array<Omit<StudentMark, 'id' | 'schoolId' | 'createdAt' | 'percentage'>>
+  ): StudentMark[] {
+    const saved = rows.map(row => {
+      const mark: StudentMark = {
+        ...row,
+        id: `mark-${Math.random().toString(36).substring(2, 10)}`,
+        schoolId,
+        percentage: row.totalMarks > 0 ? Math.round((row.score / row.totalMarks) * 10000) / 100 : 0,
+        createdAt: new Date().toISOString(),
+      };
+      this.studentMarks.set(mark.id, mark);
+      return mark;
+    });
+    this.saveToDisk();
+    return saved;
   }
 
   // --- KNOWLEDGE HUB RESOURCES ---
