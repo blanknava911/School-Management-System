@@ -65,12 +65,6 @@ export const ROLE_HIERARCHY: RoleInfo[] = [
     purpose: 'Creates assessment workspaces, uploads question papers & memorandums, and manages resources.',
     rank: 7,
   },
-  {
-    role: 'STUDENT',
-    title: 'Student',
-    purpose: 'Uploads personal work and views feedback shared with their account.',
-    rank: 8,
-  },
 ];
 
 /**
@@ -97,7 +91,6 @@ export function getHighestRole(roles: Role[]): Role {
     HOD: 5,
     GRADE_HEAD: 6,
     TEACHER: 7,
-    STUDENT: 8,
   };
   return [...roles].sort((a, b) => (roleRanks[a] || 99) - (roleRanks[b] || 99))[0];
 }
@@ -130,7 +123,7 @@ export function canAccessModule(user: User | null, module: ModuleName): boolean 
         return role === 'SUPER_ADMIN' || role === 'SCHOOL_ADMIN';
 
       case 'users':
-        return role === 'SUPER_ADMIN' || role === 'SCHOOL_ADMIN' || role === 'PRINCIPAL' || role === 'TEACHER';
+        return role === 'SUPER_ADMIN' || role === 'SCHOOL_ADMIN' || role === 'PRINCIPAL';
 
       case 'school_profile':
         return (
@@ -163,11 +156,11 @@ export function canAccessModule(user: User | null, module: ModuleName): boolean 
       case 'subjects':
       case 'teaching_assignments':
       case 'reports':
-        return role !== 'STUDENT';
+        return true;
 
       case 'assessment_workspace':
       case 'knowledge_hub':
-        return role !== 'STUDENT';
+        return true;
 
       default:
         return false;
