@@ -5,8 +5,7 @@ export type Role =
   | 'DEPUTY_PRINCIPAL'
   | 'HOD'
   | 'GRADE_HEAD'
-  | 'TEACHER'
-  | 'STUDENT';
+  | 'TEACHER';
 
 export type SchoolType = 'Primary School' | 'Secondary School' | 'Combined School' | 'Public' | 'Private' | 'Academy' | 'International' | 'Charter';
 
@@ -51,7 +50,6 @@ export interface User {
   roles?: Role[]; // Multi-role support (e.g. ['PRINCIPAL', 'TEACHER'])
   departmentIds?: string[];
   gradeIds?: string[];
-  teacherUserId?: string;
   status: 'Active' | 'Pending Setup' | 'Inactive' | 'Disabled';
   createdAt: string;
   lastLogin?: string;
@@ -126,6 +124,45 @@ export interface TeachingAssignment {
   subjectId: string;
   subjectName?: string;
   academicYear: string;
+}
+
+export interface StudentRecord {
+  id: string;
+  schoolId: string;
+  admissionNumber: string;
+  fullName: string;
+  gradeId: string;
+  classId: string;
+  guardianName?: string;
+  guardianContact?: string;
+  status: 'Active' | 'Inactive';
+  createdAt: string;
+}
+
+export interface StudentMark {
+  id: string;
+  schoolId: string;
+  studentId: string;
+  teachingAssignmentId: string;
+  assessmentTitle: string;
+  term: string;
+  score: number;
+  totalMarks: number;
+  percentage: number;
+  sourceResourceId: string;
+  capturedByUserId: string;
+  capturedByName: string;
+  createdAt: string;
+}
+
+export interface MarkImportReviewRow {
+  studentId: string;
+  admissionNumber: string;
+  studentName: string;
+  extractedName?: string;
+  score: number | null;
+  confidence: number;
+  status: 'matched' | 'manual-review' | 'not-found';
 }
 
 export interface HodPhaseAssignment {
@@ -244,6 +281,7 @@ export interface KnowledgeResource {
     | 'Meeting Minutes'
     | 'Training Material'
     | 'Reference Document'
+    | 'Assessment Evidence'
     | 'General Teaching Resource';
   folder: string;
   tags: string[];
@@ -254,6 +292,10 @@ export interface KnowledgeResource {
   departmentSharing: boolean;
   departmentId?: string;
   wholeSchoolSharing: boolean;
+  fileUrl?: string;
+  sourceType?: 'manual-upload' | 'marks-import';
+  linkedTeachingAssignmentId?: string;
+  linkedStudentIds?: string[];
   createdAt: string;
 }
 

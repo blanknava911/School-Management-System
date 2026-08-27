@@ -14,6 +14,9 @@ import {
   AcademicAssignment,
   AssessmentWorkspace,
   KnowledgeResource,
+  StudentRecord,
+  StudentMark,
+  MarkImportReviewRow,
 } from '../types.js';
 
 export const API_BASE = '/api';
@@ -294,6 +297,80 @@ export class ApiService {
     if (!res.ok) throw new Error('Failed to delete teaching assignment');
     const data = await res.json();
     return data.success;
+  }
+
+  static async getStudents(schoolId: string, assignmentId: string, actorUserId: string): Promise<StudentRecord[]> {
+    const params = new URLSearchParams({ assignmentId, actorUserId });
+    const res = await fetch(`${API_BASE}/schools/${schoolId}/students?${params.toString()}`);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load students');
+    return res.json();
+  }
+
+  static async createStudent(schoolId: string, payload: {
+    actorUserId: string;
+    assignmentId: string;
+    admissionNumber: string;
+    fullName: string;
+    guardianName?: string;
+    guardianContact?: string;
+  }): Promise<StudentRecord> {
+    const res = await fetch(`${API_BASE}/schools/${schoolId}/students`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to add student');
+    return res.json();
+  }
+
+  static async updateStudent(schoolId: string, studentId: string, payload: Partial<StudentRecord> & { actorUserId: string; assignmentId: string }): Promise<StudentRecord> {
+    const res = await fetch(`${API_BASE}/schools/${schoolId}/students/${studentId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update student');
+    return res.json();
+  }
+
+  static async deleteStudent(schoolId: string, studentId: string, assignmentId: string, actorUserId: string): Promise<boolean> {
+    const params = new URLSearchParams({ assignmentId, actorUserId });
+    const res = await fetch(`${API_BASE}/schools/${schoolId}/students/${studentId}?${params.toString()}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to remove student');
+    return (await res.json()).success;
+  }
+
+  static async getStudentMarks(schoolId: string, assignmentId: string, actorUserId: string): Promise<StudentMark[]> {
+    const params = new URLSearchParams({ assignmentId, actorUserId });
+    const res = await fetch(`${API_BASE}/schools/${schoolId}/student-marks?${params.toString()}`);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load marks');
+    return res.json();
+  }
+
+  static async analyseMarksImport(schoolId: string, payload: {
+    actorUserId: string;
+    assignmentId: string;
+    fileName: string;
+    mimeType: string;
+    dataBase64: string;
+  }): Promise<{ importId: string; extractionMethod: string; rows: MarkImportReviewRow[]; unmatchedRows: any[]; fileName: string }> {
+    const res = await fetch(`${API_BASE}/schools/${schoolId}/marks-import/analyse`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not analyse file');
+    return res.json();
+  }
+
+  static async confirmMarksImport(schoolId: string, payload: {
+    actorUserId: string;
+    assignmentId: string;
+    importId: string;
+    assessmentTitle: string;
+    term: string;
+    totalMarks: number;
+    rows: Array<{ studentId: string; score: number }>;
+  }): Promise<{ marks: StudentMark[]; resource: KnowledgeResource }> {
+    const res = await fetch(`${API_BASE}/schools/${schoolId}/marks-import/confirm`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not save marks');
+    return res.json();
   }
 
   // HOD Grade Assignments

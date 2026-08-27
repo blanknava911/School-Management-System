@@ -5,6 +5,10 @@ import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { db } from './src/server/dbStore.js';
 import { GoogleGenAI } from '@google/genai';
+import * as XLSX from 'xlsx';
+import { createWorker } from 'tesseract.js';
+import engData from '@tesseract.js-data/eng';
+import { PDFParse } from 'pdf-parse';
 
 const __dirname = process.cwd();
 
@@ -14,8 +18,8 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: '15mb' }));
-  app.use(express.urlencoded({ limit: '15mb', extended: true }));
+  app.use(express.json({ limit: '25mb' }));
+  app.use(express.urlencoded({ limit: '25mb', extended: true }));
 
   // --- API ROUTES ---
 
@@ -71,76 +75,75 @@ async function startServer() {
     });
   });
 
-  const uploadsRoot = path.join(process.cwd(), 'data', 'student-uploads');
+  const marksImportRoot = path.join(process.cwd(), 'data', 'mark-imports');
   const getUserById = (userId: string) => db.getUsers(null).find(user => user.id === userId);
-  const canAccessStudent = (actorUserId: string, studentId: string) => {
+  const leadershipRoles = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD', 'GRADE_HEAD'];
+  const canManageAssignment = (actorUserId: string, schoolId: string, assignmentId: string) => {
     const actor = getUserById(actorUserId);
-    const student = getUserById(studentId);
-    if (!actor || !student || student.role !== 'STUDENT') return false;
+    const assignment = db.getTeachingAssignments(schoolId).find(item => item.id === assignmentId);
+    if (!actor || !assignment) return false;
     if (actor.role === 'SUPER_ADMIN') return true;
-    if (actor.schoolId !== student.schoolId) return false;
-    if (actor.id === student.id) return true;
-    if (actor.role === 'TEACHER') return student.teacherUserId === actor.id;
-    return ['SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD', 'GRADE_HEAD'].includes(actor.role);
+    if (actor.schoolId !== schoolId) return false;
+    return leadershipRoles.includes(actor.role) || assignment.teacherUserId === actor.id;
   };
-  const readUploadIndex = (studentId: string) => {
-    const indexPath = path.join(uploadsRoot, studentId, 'index.json');
-    if (!fs.existsSync(indexPath)) return [] as any[];
-    return JSON.parse(fs.readFileSync(indexPath, 'utf8')) as any[];
+  const normaliseName = (value: unknown) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const extractRowValue = (row: Record<string, unknown>, candidates: string[]) => {
+    const key = Object.keys(row).find(item => candidates.includes(normaliseName(item)));
+    return key ? row[key] : undefined;
+  };
+  const extractSpreadsheetRows = (buffer: Buffer) => {
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    return XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' }).map(row => ({
+      admissionNumber: String(extractRowValue(row, ['admissionnumber', 'studentnumber', 'learnernumber', 'id']) || ''),
+      name: String(extractRowValue(row, ['name', 'student', 'studentname', 'learner', 'learnername', 'fullname']) || ''),
+      score: Number(extractRowValue(row, ['score', 'mark', 'marks', 'result', 'points'])),
+    })).filter(row => row.name || row.admissionNumber);
+  };
+  const extractRowsFromText = (text: string) => text.split(/\r?\n/).map(line => line.trim()).map(line => {
+    const markMatch = line.match(/(\d+(?:\.\d+)?)\s*(?:\/\s*\d+)?\s*$/);
+    if (!markMatch) return null;
+    const prefix = line.slice(0, markMatch.index).replace(/[|,:;]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!prefix || /^(student|learner)?\s*name$/i.test(prefix) || /^(total|average)$/i.test(prefix)) return null;
+    const admissionMatch = prefix.match(/\b[A-Z0-9-]{4,}\b/i);
+    return { admissionNumber: admissionMatch?.[0] || '', name: prefix, score: Number(markMatch[1]) };
+  }).filter((row): row is { admissionNumber: string; name: string; score: number } => Boolean(row));
+
+  const recogniseImage = async (image: Buffer) => {
+    const worker = await createWorker('eng', 1, { langPath: engData.langPath, gzip: engData.gzip });
+    try {
+      return (await worker.recognize(image)).data.text;
+    } finally {
+      await worker.terminate();
+    }
   };
 
-  app.get('/api/students/:studentId/uploads', (req, res) => {
-    const actorUserId = String(req.query.actorUserId || '');
-    if (!canAccessStudent(actorUserId, req.params.studentId)) {
-      return res.status(403).json({ error: 'You do not have access to this student.' });
+  const extractDocumentRows = async (buffer: Buffer, extension: string) => {
+    if (['.xlsx', '.xls', '.csv'].includes(extension)) {
+      return { rows: extractSpreadsheetRows(buffer), method: 'spreadsheet' };
     }
-    res.json(readUploadIndex(req.params.studentId));
-  });
-
-  app.post('/api/students/:studentId/uploads', (req, res) => {
-    const { actorUserId, name, mimeType, dataBase64 } = req.body;
-    const { studentId } = req.params;
-    if (!canAccessStudent(String(actorUserId || ''), studentId)) {
-      return res.status(403).json({ error: 'You do not have access to this student.' });
+    if (extension === '.pdf') {
+      const parser = new PDFParse({ data: new Uint8Array(buffer) });
+      try {
+        const textResult = await parser.getText({ cellSeparator: ' ', pageJoiner: '\n' });
+        let rows = extractRowsFromText(textResult.text);
+        if (rows.length > 0) return { rows, method: 'pdf-text' };
+        const screenshots = await parser.getScreenshot({ desiredWidth: 1600, imageBuffer: true });
+        const worker = await createWorker('eng', 1, { langPath: engData.langPath, gzip: engData.gzip });
+        try {
+          const pageTexts: string[] = [];
+          for (const page of screenshots.pages) pageTexts.push((await worker.recognize(Buffer.from(page.data))).data.text);
+          rows = extractRowsFromText(pageTexts.join('\n'));
+          return { rows, method: 'local-pdf-ocr' };
+        } finally {
+          await worker.terminate();
+        }
+      } finally {
+        await parser.destroy();
+      }
     }
-    if (!name || !dataBase64) return res.status(400).json({ error: 'A file is required.' });
-
-    const data = Buffer.from(dataBase64, 'base64');
-    if (data.length > 10 * 1024 * 1024) {
-      return res.status(413).json({ error: 'Files must be 10 MB or smaller.' });
-    }
-
-    const studentDir = path.join(uploadsRoot, studentId);
-    fs.mkdirSync(studentDir, { recursive: true });
-    const id = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    const safeExtension = path.extname(String(name)).replace(/[^.a-zA-Z0-9]/g, '').slice(0, 12);
-    fs.writeFileSync(path.join(studentDir, `${id}${safeExtension}`), data);
-
-    const upload = {
-      id,
-      name: path.basename(String(name)),
-      mimeType: String(mimeType || 'application/octet-stream'),
-      size: data.length,
-      uploadedAt: new Date().toISOString(),
-      downloadUrl: `/api/students/${studentId}/uploads/${id}/download`,
-      storedName: `${id}${safeExtension}`,
-    };
-    const uploads = [upload, ...readUploadIndex(studentId)];
-    fs.writeFileSync(path.join(studentDir, 'index.json'), JSON.stringify(uploads, null, 2), 'utf8');
-    const { storedName, ...publicUpload } = upload;
-    res.status(201).json(publicUpload);
-  });
-
-  app.get('/api/students/:studentId/uploads/:uploadId/download', (req, res) => {
-    const actorUserId = String(req.query.actorUserId || '');
-    const { studentId, uploadId } = req.params;
-    if (!canAccessStudent(actorUserId, studentId)) {
-      return res.status(403).json({ error: 'You do not have access to this student.' });
-    }
-    const upload = readUploadIndex(studentId).find(item => item.id === uploadId);
-    if (!upload) return res.status(404).json({ error: 'Upload not found.' });
-    res.download(path.join(uploadsRoot, studentId, upload.storedName), upload.name);
-  });
+    return { rows: extractRowsFromText(await recogniseImage(buffer)), method: 'local-image-ocr' };
+  };
 
   // School Registration Wizard Endpoint
   app.post('/api/schools/register', (req, res) => {
@@ -340,7 +343,7 @@ async function startServer() {
   // Create User in a School
   app.post('/api/schools/:schoolId/users', (req, res) => {
     const { schoolId } = req.params;
-    const { actorUser, fullName, email, role, roles, password, teacherUserId } = req.body;
+    const { actorUser, fullName, email, role, roles, password } = req.body;
 
     if (!fullName || !email || (!role && (!roles || roles.length === 0))) {
       return res.status(400).json({ error: 'Full name, email, and role are required' });
@@ -354,7 +357,6 @@ async function startServer() {
       HOD: 5,
       GRADE_HEAD: 6,
       TEACHER: 7,
-      STUDENT: 8,
     };
 
     const userRoles: string[] = Array.isArray(roles) && roles.length > 0 ? roles : (role ? [role] : ['TEACHER']);
@@ -368,7 +370,6 @@ async function startServer() {
         email,
         role: highestAuthorityRole,
         roles: userRoles as any,
-        teacherUserId: highestAuthorityRole === 'STUDENT' ? teacherUserId : undefined,
         status: 'Active',
       },
       password || 'staff123'
@@ -550,6 +551,190 @@ async function startServer() {
   app.delete('/api/schools/:schoolId/teaching-assignments/:assignmentId', (req, res) => {
     const success = db.deleteTeachingAssignment(req.params.schoolId, req.params.assignmentId);
     res.json({ success });
+  });
+
+  // Student records are roster data, not login accounts.
+  app.get('/api/schools/:schoolId/students', (req, res) => {
+    const assignmentId = String(req.query.assignmentId || '');
+    const actorUserId = String(req.query.actorUserId || '');
+    if (!assignmentId || !canManageAssignment(actorUserId, req.params.schoolId, assignmentId)) {
+      return res.status(403).json({ error: 'You do not have access to this class roster.' });
+    }
+    const assignment = db.getTeachingAssignments(req.params.schoolId).find(item => item.id === assignmentId)!;
+    res.json(db.getStudents(req.params.schoolId, assignment.classId));
+  });
+
+  app.post('/api/schools/:schoolId/students', (req, res) => {
+    const { actorUserId, assignmentId, admissionNumber, fullName, guardianName, guardianContact } = req.body;
+    if (!canManageAssignment(String(actorUserId || ''), req.params.schoolId, String(assignmentId || ''))) {
+      return res.status(403).json({ error: 'You cannot add students to this class.' });
+    }
+    if (!admissionNumber || !fullName) return res.status(400).json({ error: 'Admission number and full name are required.' });
+    const assignment = db.getTeachingAssignments(req.params.schoolId).find(item => item.id === assignmentId)!;
+    try {
+      const student = db.createStudent(req.params.schoolId, {
+        admissionNumber: String(admissionNumber).trim(),
+        fullName: String(fullName).trim(),
+        gradeId: assignment.gradeId,
+        classId: assignment.classId,
+        guardianName,
+        guardianContact,
+        status: 'Active',
+      });
+      res.status(201).json(student);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/schools/:schoolId/students/:studentId', (req, res) => {
+    const { actorUserId, assignmentId, ...updates } = req.body;
+    if (!canManageAssignment(String(actorUserId || ''), req.params.schoolId, String(assignmentId || ''))) {
+      return res.status(403).json({ error: 'You cannot edit this class roster.' });
+    }
+    try {
+      res.json(db.updateStudent(req.params.schoolId, req.params.studentId, updates));
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/schools/:schoolId/students/:studentId', (req, res) => {
+    const actorUserId = String(req.query.actorUserId || '');
+    const assignmentId = String(req.query.assignmentId || '');
+    if (!canManageAssignment(actorUserId, req.params.schoolId, assignmentId)) {
+      return res.status(403).json({ error: 'You cannot remove students from this class.' });
+    }
+    res.json({ success: db.deleteStudent(req.params.schoolId, req.params.studentId) });
+  });
+
+  app.get('/api/schools/:schoolId/student-marks', (req, res) => {
+    const assignmentId = String(req.query.assignmentId || '');
+    const actorUserId = String(req.query.actorUserId || '');
+    if (!canManageAssignment(actorUserId, req.params.schoolId, assignmentId)) {
+      return res.status(403).json({ error: 'You cannot view marks for this assignment.' });
+    }
+    res.json(db.getStudentMarks(req.params.schoolId, { teachingAssignmentId: assignmentId }));
+  });
+
+  app.post('/api/schools/:schoolId/marks-import/analyse', async (req, res) => {
+    const { actorUserId, assignmentId, fileName, mimeType, dataBase64 } = req.body;
+    const schoolId = req.params.schoolId;
+    if (!canManageAssignment(String(actorUserId || ''), schoolId, String(assignmentId || ''))) {
+      return res.status(403).json({ error: 'You cannot import marks for this assignment.' });
+    }
+    if (!fileName || !dataBase64) return res.status(400).json({ error: 'Choose a PDF, image, CSV, or Excel file.' });
+    const buffer = Buffer.from(dataBase64, 'base64');
+    if (buffer.length > 15 * 1024 * 1024) return res.status(413).json({ error: 'The file must be 15 MB or smaller.' });
+
+    const assignment = db.getTeachingAssignments(schoolId).find(item => item.id === assignmentId)!;
+    const roster = db.getStudents(schoolId, assignment.classId);
+    const extension = path.extname(String(fileName)).toLowerCase();
+    let extracted: Array<{ admissionNumber?: string; name?: string; score?: number }> = [];
+    let extractionMethod = 'manual-review';
+    try {
+      const extraction = await extractDocumentRows(buffer, extension);
+      extracted = extraction.rows;
+      extractionMethod = extraction.method;
+    } catch (err: any) {
+      console.error('[marks-import] Local extraction failed:', err);
+      extractionMethod = 'manual-review';
+    }
+
+    const importId = `import-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const schoolDir = path.join(marksImportRoot, schoolId);
+    fs.mkdirSync(schoolDir, { recursive: true });
+    const safeExtension = extension.replace(/[^.a-z0-9]/gi, '').slice(0, 10);
+    const storedName = `${importId}${safeExtension}`;
+    fs.writeFileSync(path.join(schoolDir, storedName), buffer);
+    const manifest = { importId, schoolId, assignmentId, actorUserId, fileName: path.basename(fileName), mimeType, storedName, size: buffer.length };
+    fs.writeFileSync(path.join(schoolDir, `${importId}.json`), JSON.stringify(manifest, null, 2), 'utf8');
+
+    const reviewRows = roster.map(student => {
+      const match = extracted.find(row =>
+        (row.admissionNumber && normaliseName(row.admissionNumber) === normaliseName(student.admissionNumber)) ||
+        (row.name && (normaliseName(row.name).includes(normaliseName(student.fullName)) || normaliseName(student.fullName).includes(normaliseName(row.name))))
+      );
+      const score = match && Number.isFinite(Number(match.score)) ? Number(match.score) : null;
+      return {
+        studentId: student.id,
+        admissionNumber: student.admissionNumber,
+        studentName: student.fullName,
+        extractedName: match?.name,
+        score,
+        confidence: match ? (score === null ? 0.55 : extractionMethod === 'spreadsheet' ? 0.98 : 0.78) : 0,
+        status: match && score !== null ? 'matched' : 'manual-review',
+      };
+    });
+    const unmatchedRows = extracted.filter(row => !roster.some(student =>
+      normaliseName(row.admissionNumber) === normaliseName(student.admissionNumber) ||
+      normaliseName(row.name).includes(normaliseName(student.fullName)) || normaliseName(student.fullName).includes(normaliseName(row.name))
+    ));
+    res.json({ importId, extractionMethod, rows: reviewRows, unmatchedRows, fileName: manifest.fileName });
+  });
+
+  app.post('/api/schools/:schoolId/marks-import/confirm', (req, res) => {
+    const { actorUserId, assignmentId, importId, assessmentTitle, term, totalMarks, rows } = req.body;
+    const schoolId = req.params.schoolId;
+    if (!canManageAssignment(String(actorUserId || ''), schoolId, String(assignmentId || ''))) {
+      return res.status(403).json({ error: 'You cannot save marks for this assignment.' });
+    }
+    const manifestPath = path.join(marksImportRoot, schoolId, `${importId}.json`);
+    if (!fs.existsSync(manifestPath)) return res.status(404).json({ error: 'Import source file was not found.' });
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    if (manifest.assignmentId !== assignmentId) return res.status(400).json({ error: 'Import does not match this assignment.' });
+    const numericTotal = Number(totalMarks);
+    if (!assessmentTitle || !term || !Number.isFinite(numericTotal) || numericTotal <= 0) {
+      return res.status(400).json({ error: 'Assessment title, term, and total marks are required.' });
+    }
+    const validRows = (Array.isArray(rows) ? rows : []).filter(row =>
+      db.getStudentById(row.studentId)?.schoolId === schoolId && Number.isFinite(Number(row.score)) && Number(row.score) >= 0 && Number(row.score) <= numericTotal
+    );
+    if (validRows.length === 0) return res.status(400).json({ error: 'Enter at least one valid student mark.' });
+
+    const actor = getUserById(actorUserId)!;
+    const assignment = db.getTeachingAssignments(schoolId).find(item => item.id === assignmentId)!;
+    const resource = db.createKnowledgeResource(schoolId, {
+      title: `${assessmentTitle} – source marks sheet`,
+      description: `Original ${manifest.fileName} used to capture ${validRows.length} marks for ${assignment.subjectName}, ${assignment.className}.`,
+      resourceType: 'Assessment Evidence',
+      folder: 'Assessment Evidence / Marks Imports',
+      tags: ['marks-import', assignment.subjectName || 'subject', assignment.className || 'class'],
+      fileType: path.extname(manifest.fileName).replace('.', '').toUpperCase() || 'FILE',
+      fileSize: `${(manifest.size / 1024 / 1024).toFixed(2)} MB`,
+      uploadedByUserId: actor.id,
+      uploadedByName: actor.fullName,
+      departmentSharing: false,
+      wholeSchoolSharing: true,
+      fileUrl: `/api/schools/${schoolId}/marks-import/${importId}/file`,
+      sourceType: 'marks-import',
+      linkedTeachingAssignmentId: assignmentId,
+      linkedStudentIds: validRows.map(row => row.studentId),
+    }, actor);
+    const marks = db.saveStudentMarks(schoolId, validRows.map(row => ({
+      studentId: row.studentId,
+      teachingAssignmentId: assignmentId,
+      assessmentTitle,
+      term,
+      score: Number(row.score),
+      totalMarks: numericTotal,
+      sourceResourceId: resource.id,
+      capturedByUserId: actor.id,
+      capturedByName: actor.fullName,
+    })));
+    db.addAuditLog(schoolId, actor, 'STUDENT_MARKS_IMPORTED', `${marks.length} marks imported for ${assignment.subjectName}, ${assignment.className}. Evidence: ${resource.title}.`);
+    res.status(201).json({ marks, resource });
+  });
+
+  app.get('/api/schools/:schoolId/marks-import/:importId/file', (req, res) => {
+    const actorUserId = String(req.query.actorUserId || '');
+    const manifestPath = path.join(marksImportRoot, req.params.schoolId, `${req.params.importId}.json`);
+    if (!fs.existsSync(manifestPath)) return res.status(404).json({ error: 'File not found.' });
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    if (!canManageAssignment(actorUserId, req.params.schoolId, manifest.assignmentId)) {
+      return res.status(403).json({ error: 'You cannot access this evidence file.' });
+    }
+    res.download(path.join(marksImportRoot, req.params.schoolId, manifest.storedName), manifest.fileName);
   });
 
   // HOD Grade Assignments

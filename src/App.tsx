@@ -20,7 +20,7 @@ import { KnowledgeHubView } from './components/knowledge/KnowledgeHubView';
 import { TemplatesView } from './components/templates/TemplatesView';
 import { AssessmentArchiveView } from './components/archive/AssessmentArchiveView';
 import { ReportsView } from './components/reports/ReportsView';
-import { StudentWorkspace } from './components/students/StudentWorkspace';
+import { StudentsAndMarksView } from './components/students/StudentsAndMarksView';
 
 function MainLayout() {
   const { currentUser, activeSchool, superAdminInspectingSchool, refreshSchoolData } = useAuth();
@@ -69,9 +69,6 @@ function MainLayout() {
 
   // Determine active view tab
   const renderContent = () => {
-    if (currentUser.role === 'STUDENT') {
-      return <StudentWorkspace />;
-    }
     // Super Admin platform mode tabs
     if (currentUser.role === 'SUPER_ADMIN' && !superAdminInspectingSchool) {
       if (activeTab === 'superadmin-audit') {
@@ -91,6 +88,8 @@ function MainLayout() {
         return <SchoolDashboard setActiveTab={setActiveTab} />;
       case 'assessments':
         return <AssessmentWorkspaceView />;
+      case 'students':
+        return <StudentsAndMarksView />;
       case 'knowledge':
         return <KnowledgeHubView />;
       case 'users':
