@@ -11,7 +11,8 @@ test('password verification requires the stored password', () => {
   const result = db.getUserByEmail('admin@platform.com');
 
   assert.ok(result);
+  assert.notEqual(result.passwordHash, 'admin123');
+  assert.match(result.passwordHash, /^scrypt\$/);
   assert.equal(db.verifyPassword(result.user, 'definitely-wrong', result.passwordHash), false);
-  assert.equal(db.verifyPassword(result.user, result.passwordHash, result.passwordHash), true);
+  assert.equal(db.verifyPassword(result.user, 'admin123', result.passwordHash), true);
 });
-
