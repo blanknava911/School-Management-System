@@ -472,7 +472,16 @@ export const KnowledgeHubView: React.FC = () => {
               <div><strong>File Type:</strong> {previewResource.fileType?.toUpperCase()}</div>
             </div>
 
-            <div className="flex justify-end pt-2">
+            <div className="flex justify-end gap-2 pt-2">
+              {previewResource.fileUrl && (
+                <a
+                  href={`${previewResource.fileUrl}?actorUserId=${encodeURIComponent(currentUser?.id || '')}`}
+                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white"
+                >
+                  <Download className="h-4 w-4" />
+                  Download evidence
+                </a>
+              )}
               <button
                 onClick={() => setPreviewResource(null)}
                 className="px-4 py-2 bg-slate-800 text-white font-bold text-xs rounded-xl"
