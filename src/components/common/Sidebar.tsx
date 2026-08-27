@@ -17,6 +17,7 @@ import {
   FileText,
   FileCode,
   BarChart3,
+  GraduationCap,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -42,7 +43,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
   const canAccessBranding = canEditSchoolBranding(currentUser);
   const canAccessSettings = canAccessModule(currentUser, 'school_settings');
   const canAccessAudit = canAccessModule(currentUser, 'audit_trail');
-  const isStudent = currentUser?.role === 'STUDENT';
 
   return (
     <aside className="w-64 bg-slate-900 text-slate-300 min-h-[calc(100vh-4rem)] flex flex-col border-r border-slate-800 shrink-0">
@@ -175,6 +175,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
               </button>
             )}
 
+            <button
+              onClick={() => setActiveTab('students')}
+              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                activeTab === 'students' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-300 hover:bg-slate-800'
+              }`}
+              style={activeTab === 'students' ? { backgroundColor: primaryColor } : {}}
+            >
+              <GraduationCap className="w-4 h-4" />
+              <span>Students &amp; Marks</span>
+            </button>
+
             {canAccessKnowledge && (
               <button
                 onClick={() => setActiveTab('knowledge')}
@@ -190,7 +201,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
               </button>
             )}
 
-            {!isStudent && <button
+            <button
               onClick={() => setActiveTab('archive')}
               className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                 activeTab === 'archive' || activeTab === 'templates'
@@ -201,7 +212,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
             >
               <FileCode className="w-4 h-4" />
               <span>Assessment Archive</span>
-            </button>}
+            </button>
 
             {canAccessReports && (
               <button
@@ -267,7 +278,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
               </button>
             )}
 
-            {!isStudent && <button
+            <button
               onClick={() => setActiveTab('roles')}
               className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                 activeTab === 'roles'
@@ -278,7 +289,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
             >
               <ShieldAlert className="w-4 h-4" />
               <span>Roles & Permissions</span>
-            </button>}
+            </button>
 
             {canAccessSettings && (
               <button
