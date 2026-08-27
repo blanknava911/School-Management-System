@@ -21,11 +21,33 @@ import {
 
 export const API_BASE = '/api';
 
+let sessionToken = typeof window !== 'undefined'
+  ? window.sessionStorage.getItem('samp-session-token')
+  : null;
+
+function setSessionToken(token: string | null) {
+  sessionToken = token;
+  if (typeof window === 'undefined') return;
+  if (token) window.sessionStorage.setItem('samp-session-token', token);
+  else window.sessionStorage.removeItem('samp-session-token');
+}
+
+async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  const headers = new Headers(init.headers);
+  if (sessionToken) headers.set('Authorization', `Bearer ${sessionToken}`);
+  return fetch(input, { ...init, headers });
+}
+
 export class ApiService {
+  static clearSession() {
+    setSessionToken(null);
+  }
+
   // Login
   static async login(email: string, password: string): Promise<{ user: User; school: School | null; token: string }> {
+    setSessionToken(null);
     console.log('[ApiService.login] Sending login payload to /api/auth/login:', { email });
-    const res = await fetch(`${API_BASE}/auth/login`, {
+    const res = await apiFetch(`${API_BASE}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
@@ -36,6 +58,7 @@ export class ApiService {
       throw new Error(errorData.error || 'Login failed. Please check your credentials.');
     }
     const data = await res.json();
+    setSessionToken(data.token);
     console.log('[ApiService.login] Received successful auth response:', { userId: data.user?.id, role: data.user?.role });
     return data;
   }
@@ -45,7 +68,7 @@ export class ApiService {
     schoolInfo: Partial<School>;
     adminInfo: { fullName: string; email: string; password: string };
   }): Promise<{ school: School; user: User; token: string }> {
-    const res = await fetch(`${API_BASE}/schools/register`, {
+    const res = await apiFetch(`${API_BASE}/schools/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -59,14 +82,14 @@ export class ApiService {
 
   // Get list of all schools
   static async getSchools(): Promise<School[]> {
-    const res = await fetch(`${API_BASE}/schools`);
+    const res = await apiFetch(`${API_BASE}/schools`);
     if (!res.ok) throw new Error('Failed to fetch schools');
     return res.json();
   }
 
   // Get specific school
   static async getSchool(schoolId: string): Promise<School> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}`);
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}`);
     if (!res.ok) throw new Error('Failed to fetch school details');
     return res.json();
   }
@@ -78,7 +101,7 @@ export class ApiService {
     actorUser: User,
     auditEntries?: Array<{ action: string; details: string }>
   ): Promise<School> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ actorUser, updates, auditEntries }),
@@ -89,7 +112,7 @@ export class ApiService {
 
   // Complete First-Time Setup Wizard
   static async completeFirstTimeSetup(schoolId: string, payload: any): Promise<{ school: School }> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/first-time-setup`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/first-time-setup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -100,14 +123,14 @@ export class ApiService {
 
   // Get Users for a School
   static async getUsers(schoolId: string): Promise<User[]> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/users`);
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/users`);
     if (!res.ok) throw new Error('Failed to fetch users');
     return res.json();
   }
 
   // Add User to School
   static async createUser(schoolId: string, userData: any, actorUser: User): Promise<User> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/users`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/users`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...userData, actorUser }),
@@ -115,6 +138,19 @@ export class ApiService {
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({}));
       throw new Error(errorData.error || 'Failed to create user');
+    }
+    return res.json();
+  }
+
+  static async updateUserStatus(schoolId: string, userId: string, status: 'Active' | 'Disabled'): Promise<User> {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/users/${userId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(errorData.error || 'Failed to update user status');
     }
     return res.json();
   }
@@ -131,7 +167,7 @@ export class ApiService {
     classes: SchoolClass[];
     curriculumMaps: CurriculumMap[];
   }> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/academic-structure?includeArchived=${includeArchived}`);
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/academic-structure?includeArchived=${includeArchived}`);
     if (!res.ok) throw new Error('Failed to fetch academic structure');
     return res.json();
   }
@@ -140,7 +176,7 @@ export class ApiService {
   static async getSubjects(schoolId: string, phaseId?: string, includeArchived = false): Promise<Subject[]> {
     let url = `${API_BASE}/schools/${schoolId}/subjects?includeArchived=${includeArchived}`;
     if (phaseId) url += `&phaseId=${phaseId}`;
-    const res = await fetch(url);
+    const res = await apiFetch(url);
     if (!res.ok) throw new Error('Failed to fetch subjects');
     return res.json();
   }
@@ -149,7 +185,7 @@ export class ApiService {
     schoolId: string,
     payload: { phaseId: string; name: string; code: string; isCustom?: boolean }
   ): Promise<Subject> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/subjects`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/subjects`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -162,7 +198,7 @@ export class ApiService {
   }
 
   static async updateSubject(schoolId: string, subjectId: string, updates: Partial<Subject>): Promise<Subject> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/subjects/${subjectId}`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/subjects/${subjectId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
@@ -172,7 +208,7 @@ export class ApiService {
   }
 
   static async archiveSubject(schoolId: string, subjectId: string): Promise<Subject> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/subjects/${subjectId}/archive`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/subjects/${subjectId}/archive`, {
       method: 'POST',
     });
     if (!res.ok) throw new Error('Failed to archive subject');
@@ -180,7 +216,7 @@ export class ApiService {
   }
 
   static async restoreSubject(schoolId: string, subjectId: string): Promise<Subject> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/subjects/${subjectId}/restore`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/subjects/${subjectId}/restore`, {
       method: 'POST',
     });
     if (!res.ok) throw new Error('Failed to restore subject');
@@ -188,7 +224,7 @@ export class ApiService {
   }
 
   static async deleteSubject(schoolId: string, subjectId: string): Promise<boolean> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/subjects/${subjectId}`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/subjects/${subjectId}`, {
       method: 'DELETE',
     });
     if (!res.ok) throw new Error('Failed to delete subject');
@@ -198,13 +234,13 @@ export class ApiService {
 
   // Grades & Classes
   static async getGradesAndClasses(schoolId: string, includeArchived = false): Promise<{ grades: Grade[]; classes: SchoolClass[] }> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/grades?includeArchived=${includeArchived}`);
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/grades?includeArchived=${includeArchived}`);
     if (!res.ok) throw new Error('Failed to fetch grades');
     return res.json();
   }
 
   static async createGrade(schoolId: string, payload: { phaseId: string; name: string; code?: string }): Promise<Grade> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/grades`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/grades`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -217,7 +253,7 @@ export class ApiService {
   }
 
   static async updateGrade(schoolId: string, gradeId: string, updates: Partial<Grade>): Promise<Grade> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/grades/${gradeId}`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/grades/${gradeId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
@@ -227,7 +263,7 @@ export class ApiService {
   }
 
   static async archiveGrade(schoolId: string, gradeId: string): Promise<Grade> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/grades/${gradeId}/archive`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/grades/${gradeId}/archive`, {
       method: 'POST',
     });
     if (!res.ok) throw new Error('Failed to archive grade');
@@ -235,7 +271,7 @@ export class ApiService {
   }
 
   static async restoreGrade(schoolId: string, gradeId: string): Promise<Grade> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/grades/${gradeId}/restore`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/grades/${gradeId}/restore`, {
       method: 'POST',
     });
     if (!res.ok) throw new Error('Failed to restore grade');
@@ -249,7 +285,7 @@ export class ApiService {
     subjectId: string,
     gradeId: string
   ): Promise<{ isMapped: boolean; curriculumMaps: CurriculumMap[] }> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/curriculum-map/toggle`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/curriculum-map/toggle`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phaseId, subjectId, gradeId }),
@@ -262,7 +298,7 @@ export class ApiService {
   static async getTeachingAssignments(schoolId: string, teacherUserId?: string): Promise<TeachingAssignment[]> {
     let url = `${API_BASE}/schools/${schoolId}/teaching-assignments`;
     if (teacherUserId) url += `?teacherUserId=${teacherUserId}`;
-    const res = await fetch(url);
+    const res = await apiFetch(url);
     if (!res.ok) throw new Error('Failed to fetch teaching assignments');
     return res.json();
   }
@@ -278,7 +314,7 @@ export class ApiService {
       academicYear?: string;
     }
   ): Promise<TeachingAssignment> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/teaching-assignments`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/teaching-assignments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -291,7 +327,7 @@ export class ApiService {
   }
 
   static async deleteTeachingAssignment(schoolId: string, assignmentId: string): Promise<boolean> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/teaching-assignments/${assignmentId}`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/teaching-assignments/${assignmentId}`, {
       method: 'DELETE',
     });
     if (!res.ok) throw new Error('Failed to delete teaching assignment');
@@ -301,7 +337,7 @@ export class ApiService {
 
   static async getStudents(schoolId: string, assignmentId: string, actorUserId: string): Promise<StudentRecord[]> {
     const params = new URLSearchParams({ assignmentId, actorUserId });
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/students?${params.toString()}`);
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/students?${params.toString()}`);
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load students');
     return res.json();
   }
@@ -314,7 +350,7 @@ export class ApiService {
     guardianName?: string;
     guardianContact?: string;
   }): Promise<StudentRecord> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/students`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/students`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to add student');
@@ -322,7 +358,7 @@ export class ApiService {
   }
 
   static async updateStudent(schoolId: string, studentId: string, payload: Partial<StudentRecord> & { actorUserId: string; assignmentId: string }): Promise<StudentRecord> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/students/${studentId}`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/students/${studentId}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update student');
@@ -331,14 +367,14 @@ export class ApiService {
 
   static async deleteStudent(schoolId: string, studentId: string, assignmentId: string, actorUserId: string): Promise<boolean> {
     const params = new URLSearchParams({ assignmentId, actorUserId });
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/students/${studentId}?${params.toString()}`, { method: 'DELETE' });
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/students/${studentId}?${params.toString()}`, { method: 'DELETE' });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to remove student');
     return (await res.json()).success;
   }
 
   static async getStudentMarks(schoolId: string, assignmentId: string, actorUserId: string): Promise<StudentMark[]> {
     const params = new URLSearchParams({ assignmentId, actorUserId });
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/student-marks?${params.toString()}`);
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/student-marks?${params.toString()}`);
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to load marks');
     return res.json();
   }
@@ -350,7 +386,7 @@ export class ApiService {
     mimeType: string;
     dataBase64: string;
   }): Promise<{ importId: string; extractionMethod: string; rows: MarkImportReviewRow[]; unmatchedRows: any[]; fileName: string }> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/marks-import/analyse`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/marks-import/analyse`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not analyse file');
@@ -366,7 +402,7 @@ export class ApiService {
     totalMarks: number;
     rows: Array<{ studentId: string; score: number }>;
   }): Promise<{ marks: StudentMark[]; resource: KnowledgeResource }> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/marks-import/confirm`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/marks-import/confirm`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not save marks');
@@ -377,13 +413,13 @@ export class ApiService {
   static async getHodGradeAssignments(schoolId: string, hodUserId?: string): Promise<HodGradeAssignment[]> {
     let url = `${API_BASE}/schools/${schoolId}/hod-grade-assignments`;
     if (hodUserId) url += `?hodUserId=${hodUserId}`;
-    const res = await fetch(url);
+    const res = await apiFetch(url);
     if (!res.ok) throw new Error('Failed to fetch HOD grade assignments');
     return res.json();
   }
 
   static async setHodGradeAssignments(schoolId: string, hodUserId: string, gradeIds: string[]): Promise<HodGradeAssignment[]> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/hod-grade-assignments`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/hod-grade-assignments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ hodUserId, gradeIds }),
@@ -402,13 +438,13 @@ export class ApiService {
     if (filter?.role) params.append('role', filter.role);
     if (filter?.gradeId) params.append('gradeId', filter.gradeId);
 
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/academic-assignments?${params.toString()}`);
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/academic-assignments?${params.toString()}`);
     if (!res.ok) throw new Error('Failed to fetch academic assignments');
     return res.json();
   }
 
   static async createAcademicAssignment(schoolId: string, payload: any): Promise<AcademicAssignment> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/academic-assignments`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/academic-assignments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -418,7 +454,7 @@ export class ApiService {
   }
 
   static async deleteAcademicAssignment(schoolId: string, id: string): Promise<{ success: boolean }> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/academic-assignments/${id}`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/academic-assignments/${id}`, {
       method: 'DELETE',
     });
     if (!res.ok) throw new Error('Failed to delete academic assignment');
@@ -429,13 +465,13 @@ export class ApiService {
   static async getHodPhaseAssignments(schoolId: string, hodUserId?: string): Promise<HodPhaseAssignment[]> {
     let url = `${API_BASE}/schools/${schoolId}/hod-phase-assignments`;
     if (hodUserId) url += `?hodUserId=${hodUserId}`;
-    const res = await fetch(url);
+    const res = await apiFetch(url);
     if (!res.ok) throw new Error('Failed to fetch HOD phase assignments');
     return res.json();
   }
 
   static async setHodPhaseAssignments(schoolId: string, hodUserId: string, phaseIds: string[]): Promise<HodPhaseAssignment[]> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/hod-phase-assignments`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/hod-phase-assignments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ hodUserId, phaseIds }),
@@ -455,7 +491,7 @@ export class ApiService {
     if (filter?.subjectId) params.append('subjectId', filter.subjectId);
     if (filter?.teacherUserId) params.append('teacherUserId', filter.teacherUserId);
 
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/assessment-workspaces?${params.toString()}`);
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/assessment-workspaces?${params.toString()}`);
     if (!res.ok) throw new Error('Failed to fetch assessment workspaces');
     return res.json();
   }
@@ -471,7 +507,7 @@ export class ApiService {
       teacherUserId: string;
     }
   ): Promise<AssessmentWorkspace> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/assessment-workspaces`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/assessment-workspaces`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -487,7 +523,7 @@ export class ApiService {
     hodUserId?: string,
     actorUser?: User
   ): Promise<AssessmentWorkspace> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/assessment-workspaces/${workspaceId}/status`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/assessment-workspaces/${workspaceId}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status, hodUserId, actorUser }),
@@ -501,7 +537,7 @@ export class ApiService {
     workspaceId: string,
     updates: Partial<AssessmentWorkspace>
   ): Promise<AssessmentWorkspace> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/assessment-workspaces/${workspaceId}`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/assessment-workspaces/${workspaceId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
@@ -515,7 +551,7 @@ export class ApiService {
     workspaceId: string,
     actorUser?: User
   ): Promise<{ success: boolean }> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/assessment-workspaces/${workspaceId}`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/assessment-workspaces/${workspaceId}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ actorUser }),
@@ -529,7 +565,7 @@ export class ApiService {
     status: 'Active' | 'Disabled',
     actorUser?: User
   ): Promise<School> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/disable`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/disable`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status, actorUser }),
@@ -540,13 +576,13 @@ export class ApiService {
 
   // Get Departments
   static async getDepartments(schoolId: string): Promise<Department[]> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/departments`);
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/departments`);
     if (!res.ok) throw new Error('Failed to fetch departments');
     return res.json();
   }
 
   static async createDepartment(schoolId: string, dept: { name: string; code: string }): Promise<Department> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/departments`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/departments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(dept),
@@ -557,14 +593,14 @@ export class ApiService {
 
   // Audit Logs
   static async getAuditLogs(schoolId: string | 'PLATFORM'): Promise<AuditLog[]> {
-    const res = await fetch(`${API_BASE}/audit-logs?schoolId=${schoolId}`);
+    const res = await apiFetch(`${API_BASE}/audit-logs?schoolId=${schoolId}`);
     if (!res.ok) throw new Error('Failed to fetch audit logs');
     return res.json();
   }
 
   // Super Admin context switch
   static async switchSchoolInspection(actorUser: User, targetSchoolId: string): Promise<{ targetSchool: School }> {
-    const res = await fetch(`${API_BASE}/platform/switch-school`, {
+    const res = await apiFetch(`${API_BASE}/platform/switch-school`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ actorUser, targetSchoolId }),
@@ -575,13 +611,13 @@ export class ApiService {
 
   // Knowledge Hub Resources
   static async getKnowledgeResources(schoolId: string): Promise<KnowledgeResource[]> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/knowledge-resources`);
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/knowledge-resources`);
     if (!res.ok) throw new Error('Failed to fetch knowledge resources');
     return res.json();
   }
 
   static async createKnowledgeResource(schoolId: string, payload: Partial<KnowledgeResource>, actorUser?: User): Promise<KnowledgeResource> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/knowledge-resources`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/knowledge-resources`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...payload, actorUser }),
@@ -591,7 +627,7 @@ export class ApiService {
   }
 
   static async deleteKnowledgeResource(schoolId: string, resourceId: string, actorUser?: User): Promise<{ success: boolean }> {
-    const res = await fetch(`${API_BASE}/schools/${schoolId}/knowledge-resources/${resourceId}`, {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/knowledge-resources/${resourceId}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ actorUser }),
@@ -602,7 +638,7 @@ export class ApiService {
 
   // AI Suggestion
   static async suggestCurriculum(schoolType: string, country: string): Promise<{ departments: any[]; subjects: any[] }> {
-    const res = await fetch(`${API_BASE}/ai/suggest-curriculum`, {
+    const res = await apiFetch(`${API_BASE}/ai/suggest-curriculum`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ schoolType, country }),
@@ -611,3 +647,4 @@ export class ApiService {
     return res.json();
   }
 }
+
