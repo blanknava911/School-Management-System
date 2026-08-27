@@ -26,7 +26,6 @@ const AVAILABLE_ROLES: { role: Role; label: string }[] = [
   { role: 'HOD', label: 'DH (Departmental Head)' },
   { role: 'GRADE_HEAD', label: 'Grade Head' },
   { role: 'TEACHER', label: 'Teacher' },
-  { role: 'STUDENT', label: 'Student' },
 ];
 
 export const UserManagement: React.FC = () => {
@@ -43,7 +42,6 @@ export const UserManagement: React.FC = () => {
   const [primaryRole, setPrimaryRole] = useState<Role>('TEACHER');
   const [selectedRoles, setSelectedRoles] = useState<Role[]>(['TEACHER']);
   const [password, setPassword] = useState<string>('staff123');
-  const [assignedTeacherId, setAssignedTeacherId] = useState<string>('');
   const [modalError, setModalError] = useState<string | null>(null);
 
   // Grade, Class & Academic Assignment States
@@ -169,7 +167,6 @@ export const UserManagement: React.FC = () => {
           email,
           role: inheritedPrimaryRole,
           roles: selectedRoles,
-          teacherUserId: inheritedPrimaryRole === 'STUDENT' ? assignedTeacherId : undefined,
           password,
         },
         currentUser
@@ -215,7 +212,6 @@ export const UserManagement: React.FC = () => {
       setPassword('staff123');
       setSelectedRoles(['TEACHER']);
       setPrimaryRole('TEACHER');
-      setAssignedTeacherId('');
       setSelectedGradeIds([]);
       setSelectedClassIds([]);
       loadUsers();
@@ -237,8 +233,6 @@ export const UserManagement: React.FC = () => {
   }
 
   const filteredUsers = users.filter(user => {
-    const isTeacherView = currentUser?.role === 'TEACHER';
-    if (isTeacherView && (user.role !== 'STUDENT' || user.teacherUserId !== currentUser.id)) return false;
     const matchesSearch =
       user.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       user.email.toLowerCase().includes(searchQuery.toLowerCase());
@@ -259,7 +253,7 @@ export const UserManagement: React.FC = () => {
             <h2 className="text-xl font-bold text-slate-900">User Management</h2>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            {currentUser?.role === 'TEACHER' ? 'Students assigned to your account' : 'Managing staff and student accounts'} for <strong className="text-slate-800">{activeSchool.name}</strong>
+            Managing staff accounts for <strong className="text-slate-800">{activeSchool.name}</strong>. Student rosters are managed under Students &amp; Marks.
           </p>
         </div>
 
@@ -501,23 +495,6 @@ export const UserManagement: React.FC = () => {
                   </span>
                 </div>
               </div>
-
-              {getHighestRole(selectedRoles) === 'STUDENT' && (
-                <div>
-                  <label className="block font-bold text-slate-700 mb-1">Assigned Teacher *</label>
-                  <select
-                    required
-                    value={assignedTeacherId}
-                    onChange={e => setAssignedTeacherId(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-lg outline-none text-slate-900 text-sm bg-white"
-                  >
-                    <option value="">Select a teacher</option>
-                    {users.filter(user => getUserRoles(user).includes('TEACHER')).map(teacher => (
-                      <option key={teacher.id} value={teacher.id}>{teacher.fullName}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
 
               {/* Mandatory Class Assignment for Teacher Accounts */}
               {(selectedRoles.includes('TEACHER') || getHighestRole(selectedRoles) === 'TEACHER') && (
