@@ -1,0 +1,130 @@
+{
+  "entities": {
+    "School": {
+      "collectionName": "schools",
+      "title": "School Tenant",
+      "description": "Educational institution tenant entity",
+      "fields": {
+        "id": { "type": "string", "description": "Unique School ID" },
+        "name": { "type": "string", "description": "School name" },
+        "type": { "type": "string", "description": "School category" },
+        "registrationNumber": { "type": "string", "description": "Unique registration number" },
+        "status": { "type": "string", "description": "School status (Active, Disabled)" },
+        "province": { "type": "string", "description": "Province" },
+        "country": { "type": "string", "description": "Country" },
+        "logoUrl": { "type": "string", "description": "Logo URL" },
+        "badgeUrl": { "type": "string", "description": "Badge URL" },
+        "motto": { "type": "string", "description": "School motto" },
+        "primaryColor": { "type": "string", "description": "Primary theme color" },
+        "createdAt": { "type": "string", "description": "ISO creation timestamp" }
+      },
+      "relationships": []
+    },
+    "User": {
+      "collectionName": "users",
+      "title": "User",
+      "description": "School staff and administrator accounts",
+      "fields": {
+        "id": { "type": "string", "description": "Unique User ID / Firebase Auth UID" },
+        "schoolId": { "type": "string", "description": "Associated school tenant ID" },
+        "email": { "type": "string", "description": "Email address" },
+        "fullName": { "type": "string", "description": "Full name" },
+        "role": { "type": "string", "description": "Primary inherited role" },
+        "roles": { "type": "array", "description": "Array of assigned multi-roles" },
+        "status": { "type": "string", "description": "Account status (Active, Disabled)" },
+        "createdAt": { "type": "string", "description": "ISO creation timestamp" }
+      },
+      "relationships": [
+        { "type": "many-to-one", "target": "School", "field": "schoolId" }
+      ]
+    },
+    "AssessmentWorkspace": {
+      "collectionName": "assessments",
+      "title": "Assessment Workspace",
+      "description": "Assessment workspace including question papers, memos, and moderation workflows",
+      "fields": {
+        "id": { "type": "string", "description": "Unique assessment ID" },
+        "schoolId": { "type": "string", "description": "Associated school ID" },
+        "title": { "type": "string", "description": "Assessment title" },
+        "grade": { "type": "string", "description": "Grade level" },
+        "subject": { "type": "string", "description": "Subject name" },
+        "status": { "type": "string", "description": "Workflow approval status" },
+        "questionPaperUrl": { "type": "string", "description": "Cloud storage question paper URL" },
+        "memoUrl": { "type": "string", "description": "Cloud storage memo URL" },
+        "createdById": { "type": "string", "description": "Author user ID" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "relationships": [
+        { "type": "many-to-one", "target": "School", "field": "schoolId" },
+        { "type": "many-to-one", "target": "User", "field": "createdById" }
+      ]
+    },
+    "KnowledgeResource": {
+      "collectionName": "knowledgeHub",
+      "title": "Knowledge Resource",
+      "description": "Curriculum policies, templates, and evidence files in Knowledge Hub",
+      "fields": {
+        "id": { "type": "string", "description": "Resource ID" },
+        "schoolId": { "type": "string", "description": "School ID" },
+        "title": { "type": "string", "description": "Document title" },
+        "resourceType": { "type": "string", "description": "Category" },
+        "folder": { "type": "string", "description": "Folder hierarchy" },
+        "fileUrl": { "type": "string", "description": "Storage download URL" },
+        "uploadedByUserId": { "type": "string", "description": "Uploader user ID" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "relationships": [
+        { "type": "many-to-one", "target": "School", "field": "schoolId" }
+      ]
+    },
+    "StudentRecord": {
+      "collectionName": "students",
+      "title": "Student Record",
+      "description": "Student class roster member",
+      "fields": {
+        "id": { "type": "string", "description": "Student record ID" },
+        "schoolId": { "type": "string", "description": "School ID" },
+        "admissionNumber": { "type": "string", "description": "Student admission number" },
+        "fullName": { "type": "string", "description": "Full name" },
+        "gradeId": { "type": "string", "description": "Grade ID" },
+        "classId": { "type": "string", "description": "Class Section ID" },
+        "status": { "type": "string", "description": "Active/Inactive status" }
+      },
+      "relationships": [
+        { "type": "many-to-one", "target": "School", "field": "schoolId" }
+      ]
+    },
+    "StudentMark": {
+      "collectionName": "studentMarks",
+      "title": "Student Mark",
+      "description": "Recorded marks for assessments and imported marks sheets",
+      "fields": {
+        "id": { "type": "string", "description": "Mark record ID" },
+        "schoolId": { "type": "string", "description": "School ID" },
+        "studentId": { "type": "string", "description": "Student ID" },
+        "teachingAssignmentId": { "type": "string", "description": "Teaching assignment ID" },
+        "assessmentTitle": { "type": "string", "description": "Assessment title" },
+        "score": { "type": "number", "description": "Obtained mark" },
+        "totalMarks": { "type": "number", "description": "Total possible marks" }
+      },
+      "relationships": [
+        { "type": "many-to-one", "target": "School", "field": "schoolId" },
+        { "type": "many-to-one", "target": "StudentRecord", "field": "studentId" }
+      ]
+    },
+    "AuditLog": {
+      "collectionName": "auditTrail",
+      "title": "Audit Log",
+      "description": "Immutable security and administrative audit event",
+      "fields": {
+        "id": { "type": "string", "description": "Log ID" },
+        "schoolId": { "type": "string", "description": "School ID or platform null" },
+        "userId": { "type": "string", "description": "Actor user ID" },
+        "action": { "type": "string", "description": "Action type" },
+        "details": { "type": "string", "description": "Detailed log description" },
+        "timestamp": { "type": "string", "description": "Event timestamp" }
+      },
+      "relationships": []
+    }
+  }
+}
