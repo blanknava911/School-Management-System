@@ -14,7 +14,8 @@ The **School Assessment Management Platform** provides an isolated, multi-tenant
 
 - **Multi-Tenant Isolation**: Each school is encapsulated within an isolated tenant environment (`schoolId`). Data, users, subjects, classes, assessments, and audit logs are scoped strictly to the respective school.
 - **Hierarchical Role-Based Access Control (RBAC)**: Fine-grained authorization controls module visibility, creation permissions, approval chains, and moderation actions.
-- **Persistent Data Store**: A robust server-side database store (`src/server/dbStore.ts`) with disk persistence (`data/db-store.json`), supporting atomic operations, relation mapping, audit trails, and automatic data initialization.
+- **Authenticated API Boundary**: Protected API routes require a short-lived bearer session. The server derives the acting user from that verified session instead of trusting actor details supplied by the client.
+- **Persistent Data Store**: The current development architecture uses `src/server/dbStore.ts` with local persistence in `data/db.json`. Runtime data is ignored by Git and must contain fictional test data only.
 
 ---
 
@@ -64,7 +65,7 @@ The system enforces a strict priority and capability hierarchy:
 
 ### 5. Assessment & Moderation Workspace
 - **Assessment Creation**: Build structured assessments, term exams, diagnostic tests, and class tasks with weightings, duration, and mark totals.
-- **Review & Moderation Workflow**: Multi-stage approval lifecycle (Draft → Submitted → Grade Head Review → HOD Moderation → Principal Approval → Published).
+- **Review & Moderation Workflow**: Server-enforced lifecycle from Draft through review, Approved, and Archived. Ownership and role checks prevent unauthorized reversals or edits to archived work.
 - **Feedback & Revisions**: Reviewers can submit comments and request revisions directly on assessment drafts.
 
 ### 6. Institutional Knowledge Hub & Templates
@@ -90,16 +91,27 @@ The system enforces a strict priority and capability hierarchy:
 - **Backend**:
   - [Express](https://expressjs.com/) (Node.js TypeScript API server)
   - Custom REST API endpoints (`/api/*`)
-  - Server-side DB store with JSON disk persistence (`data/db-store.json`)
+  - Server-side DB store with JSON disk persistence (`data/db.json`)
+  - Scrypt password hashing and random in-memory bearer sessions
   - [@google/genai](https://www.npmjs.com/package/@google/genai) integration ready for server-side assistance
+- **Firebase foundation**:
+  - Firebase client and Admin SDK dependencies
+  - Tenant-aware Firestore rules with a deny-by-default fallback
+  - Cloud Storage locked down until upload integration is complete
+  - Named-database rules deployment configured in `firebase.json`
 
 ---
 
 ## 📁 Directory Structure
 
 ```text
-├── data/                       # Persistent JSON database storage
-│   └── db-store.json
+├── data/                       # Local runtime data; ignored by Git
+│   └── db.json
+├── docs/
+│   └── V1_QA_REPORT.md         # Security findings and verification status
+├── firebase.json               # Firebase rules deployment configuration
+├── firestore.rules             # Firestore tenant and role rules
+├── storage.rules               # Cloud Storage rules
 ├── server.ts                   # Backend Express server & API endpoints
 ├── src/
 │   ├── components/
@@ -149,19 +161,45 @@ The system enforces a strict priority and capability hierarchy:
 | `npm run build` | Builds the production Vite bundle and bundles `server.ts` into `dist/server.cjs` via `esbuild` |
 | `npm start` | Starts the production server from `dist/server.cjs` |
 | `npm run lint` | Runs TypeScript type checking (`tsc --noEmit`) |
+| `npm test` | Runs the database and credential-storage tests |
 | `npm run clean` | Cleans build artifacts and compiled files |
 
 ---
 
-## 📝 Recent Functional Enhancements
+## 🔐 Authentication and Authorization
 
-1. **School Tenant Disable / Enable Capability**:
-   - Integrated confirmation modal on the Super Admin Dashboard.
-   - Enforced tenant status checks on authentication to prevent logins to deactivated school portals.
-2. **Role Priority & Auto-Inheritance**:
-   - Multi-role selection dynamically resolves and assigns the highest authority tier (`getHighestRole`).
-3. **Teacher Class Section Validation**:
-   - Enforced required class section allocation during teacher account onboarding.
-   - Automatically provisions initial teaching assignments linked to chosen classes.
-4. **Seamless User Provisioning & Authentication**:
-   - Improved password validation, pre-seeded demo user handling, and dynamic staff account creation.
+- Login uses a single email-and-password entry point. The account's role and school membership determine the available modules and API permissions.
+- Sessions expire after eight hours and are stored only for the active browser tab.
+- Disabled users and users belonging to disabled schools cannot obtain a session.
+- Cross-school requests are rejected unless the verified account is a platform super administrator.
+- Teachers can access only their assigned classes, subjects, assessment workspaces, and student rosters.
+- School administrators, principals, deputies, HODs, and grade heads receive broader access according to the server-side role matrix.
+- New locally stored passwords are hashed with scrypt. Valid legacy plaintext entries are migrated to hashes on login.
+
+## 📝 Recent Major Changes — August 2026
+
+1. **API security and tenant isolation**
+   - Added server-issued sessions to protected routes.
+   - Added server-side school, role, ownership, and assignment checks.
+   - Removed trust in client-supplied actor identities.
+2. **Account lifecycle security**
+   - Persisted user enable/disable actions and enforced them at login.
+   - Added stronger new-user password requirements and generic invalid-credential errors.
+3. **Assessment workflow protection**
+   - Added explicit transition validation and role-specific approval/archive permissions.
+   - Made archived assessments read-only and protected approved work from deletion.
+4. **Teacher Students & Marks workflow**
+   - Teachers now load their assigned subjects and classes without requesting the leadership-only user directory.
+5. **Firebase safeguards**
+   - Replaced broad Firestore access with tenant/role rules and a deny-all fallback.
+   - Added deny-by-default Storage rules until file uploads are fully integrated.
+6. **QA and verification**
+   - Added `docs/V1_QA_REPORT.md` with the original findings, fixes, test results, and remaining work.
+
+## ⚠️ Current Development Status
+
+The Firebase foundation is configured, but authentication and application persistence still run through the local Express/JSON development layer. Firebase Authentication, Firestore persistence, Cloud Storage uploads, emulator rule tests, durable multi-instance sessions, session revocation, and login rate limiting remain to be implemented. Do not use real school or student data until those items receive a follow-up security review.
+
+## 📚 Documentation Maintenance
+
+Update this README whenever a pull request introduces a major feature, architecture change, security change, new setup requirement, or significant limitation. Keep `docs/V1_QA_REPORT.md` focused on test evidence and remediation status.
