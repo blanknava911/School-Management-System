@@ -13,7 +13,7 @@ The baseline build and existing tests passed, but testing found seven security a
 | ID | Severity | Finding | Status |
 | --- | --- | --- | --- |
 | QA-SEC-001 | Critical | API endpoints accepted unauthenticated and cross-school requests | Fixed and verified |
-| QA-SEC-002 | Critical | Passwords were stored as plaintext in committed runtime data | Fixed for local storage; committed runtime file removed |
+| QA-SEC-002 | Critical | Passwords were stored as plaintext in runtime data | Fixed for local storage; runtime data excluded from commits |
 | QA-SEC-003 | Critical | Firestore had an authenticated-user catch-all rule | Fixed; rules now deny by default |
 | QA-ARCH-001 | High | Firebase initialization was not connected to application data flows | Open; migration is still required |
 | QA-WF-001 | High | Approved assessments could move backwards without authorization | Fixed and verified |
@@ -29,7 +29,7 @@ The baseline build and existing tests passed, but testing found seven security a
 - Added persistent enable/disable controls for users and blocked disabled users and disabled schools at login.
 - Replaced different login errors with one generic invalid-credentials response.
 - Replaced plaintext password storage with scrypt hashes and automatic migration after a valid legacy login.
-- Removed runtime database data from source control and added `data/` to `.gitignore`.
+- Kept runtime database data out of source control by adding `data/` to `.gitignore`.
 - Replaced broad Firestore access with tenant/role rules, a deny-all fallback, and locked-down Storage rules until file storage is integrated.
 - Fixed the teacher Students & Marks view so it loads assigned classes without requesting the protected user-management endpoint.
 
@@ -51,4 +51,3 @@ The baseline build and existing tests passed, but testing found seven security a
 ## Remaining work before real-data use
 
 The application still uses the local Express/JSON persistence layer. Firebase is configured, but Firebase Authentication, Firestore persistence, Cloud Storage uploads, emulator rule tests, session revocation, login rate limiting, and durable multi-instance sessions are not complete. Keep this project on fictional data until that migration and a follow-up security test are finished.
-
