@@ -2,6 +2,11 @@ node_modules/
 build/
 dist/
 coverage/
+data/
+eng.traineddata
+test-*.pdf
+test-*.png
+test-*.xlsx
 .DS_Store
 *.log
 .env*

@@ -41,7 +41,7 @@ export const UserManagement: React.FC = () => {
   const [email, setEmail] = useState<string>('');
   const [primaryRole, setPrimaryRole] = useState<Role>('TEACHER');
   const [selectedRoles, setSelectedRoles] = useState<Role[]>(['TEACHER']);
-  const [password, setPassword] = useState<string>('staff123');
+  const [password, setPassword] = useState<string>('');
   const [modalError, setModalError] = useState<string | null>(null);
 
   // Grade, Class & Academic Assignment States
@@ -73,22 +73,34 @@ export const UserManagement: React.FC = () => {
   const isAllowedToAccess = canAccessModule(currentUser, 'users');
   const isAllowedToCreate = canCreateUsers(currentUser);
 
-  const handleDisableUser = (targetUser: User) => {
-    setUsers(users.map(u => u.id === targetUser.id ? { ...u, status: 'Disabled' as const } : u));
-    setActionNotice({
-      title: 'User Account Disabled',
-      message: `The user account for ${targetUser.fullName} has been disabled. Historical records, assessments, and audit logs remain intact.`,
-      type: 'info'
-    });
+  const handleDisableUser = async (targetUser: User) => {
+    if (!activeSchool) return;
+    try {
+      const updated = await ApiService.updateUserStatus(activeSchool.id, targetUser.id, 'Disabled');
+      setUsers(users.map(u => u.id === targetUser.id ? updated : u));
+      setActionNotice({
+        title: 'User Account Disabled',
+        message: `The user account for ${targetUser.fullName} has been disabled. Historical records, assessments, and audit logs remain intact.`,
+        type: 'info'
+      });
+    } catch (err: any) {
+      setActionNotice({ title: 'Unable to Disable User', message: err.message, type: 'warning' });
+    }
   };
 
-  const handleEnableUser = (targetUser: User) => {
-    setUsers(users.map(u => u.id === targetUser.id ? { ...u, status: 'Active' as const } : u));
-    setActionNotice({
-      title: 'User Account Re-enabled',
-      message: `The user account for ${targetUser.fullName} has been reactivated.`,
-      type: 'info'
-    });
+  const handleEnableUser = async (targetUser: User) => {
+    if (!activeSchool) return;
+    try {
+      const updated = await ApiService.updateUserStatus(activeSchool.id, targetUser.id, 'Active');
+      setUsers(users.map(u => u.id === targetUser.id ? updated : u));
+      setActionNotice({
+        title: 'User Account Re-enabled',
+        message: `The user account for ${targetUser.fullName} has been reactivated.`,
+        type: 'info'
+      });
+    } catch (err: any) {
+      setActionNotice({ title: 'Unable to Enable User', message: err.message, type: 'warning' });
+    }
   };
 
   const handleDeleteUser = (targetUser: User) => {
@@ -209,7 +221,7 @@ export const UserManagement: React.FC = () => {
       setIsAddModalOpen(false);
       setFullName('');
       setEmail('');
-      setPassword('staff123');
+      setPassword('');
       setSelectedRoles(['TEACHER']);
       setPrimaryRole('TEACHER');
       setSelectedGradeIds([]);
@@ -626,10 +638,12 @@ export const UserManagement: React.FC = () => {
                 <input
                   type="password"
                   required
+                  minLength={12}
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   className="w-full px-3 py-2 border rounded-lg outline-none text-slate-900 text-sm font-mono"
                 />
+                <p className="mt-1 text-[11px] text-slate-500">Use at least 12 characters.</p>
               </div>
 
               <div className="pt-2 flex justify-end space-x-2">

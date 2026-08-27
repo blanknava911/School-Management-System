@@ -1,64 +1,88 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
     function isAuthenticated() {
       return request.auth != null;
     }
-    
+
+    function currentUser() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
     function isSuperAdmin() {
+      return isAuthenticated() && currentUser().role == 'SUPER_ADMIN';
+    }
+
+    function hasAnyRole(allowedRoles) {
       return isAuthenticated() && (
-        request.auth.token.role == 'SUPER_ADMIN' ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'SUPER_ADMIN'
+        currentUser().role in allowedRoles ||
+        (currentUser().roles is list && currentUser().roles.hasAny(allowedRoles))
       );
     }
-    
+
     function belongsToSchool(schoolId) {
-      return isAuthenticated() && (
-        isSuperAdmin() ||
-        request.auth.token.schoolId == schoolId ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.schoolId == schoolId
-      );
+      return isAuthenticated() && (isSuperAdmin() || currentUser().schoolId == schoolId);
+    }
+
+    function canManageSchool(schoolId) {
+      return belongsToSchool(schoolId) && hasAnyRole([
+        'SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL'
+      ]);
+    }
+
+    function canViewLeadershipData(schoolId) {
+      return belongsToSchool(schoolId) && hasAnyRole([
+        'SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD'
+      ]);
     }
 
     match /schools/{schoolId} {
-      allow read: if isAuthenticated();
-      allow write: if isSuperAdmin() || (isAuthenticated() && request.auth.token.role == 'SCHOOL_ADMIN' && request.auth.token.schoolId == schoolId);
+      allow read: if belongsToSchool(schoolId);
+      allow create: if isSuperAdmin();
+      allow update: if canManageSchool(schoolId);
+      allow delete: if false;
     }
 
     match /users/{userId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || belongsToSchool(resource.data.schoolId));
-      allow write: if isSuperAdmin() || (isAuthenticated() && request.auth.uid == userId) || (isAuthenticated() && belongsToSchool(request.resource.data.schoolId));
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId ||
+        canViewLeadershipData(resource.data.schoolId)
+      );
+      allow create: if canManageSchool(request.resource.data.schoolId) &&
+        request.resource.data.role != 'SUPER_ADMIN';
+      allow update: if canManageSchool(resource.data.schoolId) &&
+        request.resource.data.schoolId == resource.data.schoolId &&
+        (isSuperAdmin() || request.resource.data.role != 'SUPER_ADMIN');
+      allow delete: if false;
     }
 
     match /assessments/{assessmentId} {
-      allow read, write: if isAuthenticated() && belongsToSchool(resource.data.schoolId);
-      allow create: if isAuthenticated() && belongsToSchool(request.resource.data.schoolId);
+      allow read: if belongsToSchool(resource.data.schoolId);
+      allow create, update, delete: if false;
     }
 
     match /knowledgeHub/{resourceId} {
-      allow read, write: if isAuthenticated() && belongsToSchool(resource.data.schoolId);
-      allow create: if isAuthenticated() && belongsToSchool(request.resource.data.schoolId);
+      allow read: if belongsToSchool(resource.data.schoolId);
+      allow create, update, delete: if false;
     }
 
     match /students/{studentId} {
-      allow read, write: if isAuthenticated() && belongsToSchool(resource.data.schoolId);
-      allow create: if isAuthenticated() && belongsToSchool(request.resource.data.schoolId);
+      allow read: if belongsToSchool(resource.data.schoolId);
+      allow create, update, delete: if false;
     }
 
     match /studentMarks/{markId} {
-      allow read, write: if isAuthenticated() && belongsToSchool(resource.data.schoolId);
-      allow create: if isAuthenticated() && belongsToSchool(request.resource.data.schoolId);
+      allow read: if belongsToSchool(resource.data.schoolId);
+      allow create, update, delete: if false;
     }
 
     match /auditTrail/{logId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update, delete: if isSuperAdmin();
+      allow read: if canViewLeadershipData(resource.data.schoolId);
+      allow create, update, delete: if false;
     }
 
     match /{document=**} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if false;
     }
   }
 }

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import {
   School,
   User,
@@ -40,6 +41,12 @@ export class DatabaseStore {
   private students: Map<string, StudentRecord> = new Map();
   private studentMarks: Map<string, StudentMark> = new Map();
   private auditLogs: AuditLog[] = [];
+
+  private hashPassword(password: string): string {
+    const salt = randomBytes(16).toString('hex');
+    const derivedKey = scryptSync(password, salt, 64).toString('hex');
+    return `scrypt$${salt}$${derivedKey}`;
+  }
 
   constructor() {
     const loaded = this.loadFromDisk();
@@ -139,7 +146,7 @@ export class DatabaseStore {
       lastLogin: new Date().toISOString(),
     };
     this.users.set(superAdmin.id, superAdmin);
-    this.userPasswords.set(superAdmin.id, 'admin123');
+    this.userPasswords.set(superAdmin.id, this.hashPassword('admin123'));
 
     // 2. Demo Primary School 1: Apex Primary School (SCH-1001)
     const school1: School = {
@@ -181,7 +188,7 @@ export class DatabaseStore {
       lastLogin: new Date().toISOString(),
     };
     this.users.set(school1Admin.id, school1Admin);
-    this.userPasswords.set(school1Admin.id, 'apex123');
+    this.userPasswords.set(school1Admin.id, this.hashPassword('apex123'));
 
     // School 1 Principal
     const school1Principal: User = {
@@ -194,7 +201,7 @@ export class DatabaseStore {
       createdAt: '2026-01-11T09:00:00.000Z',
     };
     this.users.set(school1Principal.id, school1Principal);
-    this.userPasswords.set(school1Principal.id, 'apex123');
+    this.userPasswords.set(school1Principal.id, this.hashPassword('apex123'));
 
     // School 1 Deputy Principal
     const school1Deputy: User = {
@@ -207,7 +214,7 @@ export class DatabaseStore {
       createdAt: '2026-01-11T09:30:00.000Z',
     };
     this.users.set(school1Deputy.id, school1Deputy);
-    this.userPasswords.set(school1Deputy.id, 'apex123');
+    this.userPasswords.set(school1Deputy.id, this.hashPassword('apex123'));
 
     // School 1 HOD (Sarah Jenkins)
     const school1Hod: User = {
@@ -220,7 +227,7 @@ export class DatabaseStore {
       createdAt: '2026-01-12T11:00:00.000Z',
     };
     this.users.set(school1Hod.id, school1Hod);
-    this.userPasswords.set(school1Hod.id, 'apex123');
+    this.userPasswords.set(school1Hod.id, this.hashPassword('apex123'));
 
     // School 1 Teachers (Mrs. Smith, Mr. Mthembu)
     const teacherSmith: User = {
@@ -233,7 +240,7 @@ export class DatabaseStore {
       createdAt: '2026-01-12T11:30:00.000Z',
     };
     this.users.set(teacherSmith.id, teacherSmith);
-    this.userPasswords.set(teacherSmith.id, 'apex123');
+    this.userPasswords.set(teacherSmith.id, this.hashPassword('apex123'));
 
     const teacherMthembu: User = {
       id: 'usr-apex-teacher-mthembu',
@@ -245,7 +252,7 @@ export class DatabaseStore {
       createdAt: '2026-01-12T12:00:00.000Z',
     };
     this.users.set(teacherMthembu.id, teacherMthembu);
-    this.userPasswords.set(teacherMthembu.id, 'apex123');
+    this.userPasswords.set(teacherMthembu.id, this.hashPassword('apex123'));
 
     // Seed South African Primary School Structure for SCH-1001
     this.initializePrimarySchoolAcademicStructure('SCH-1001');
@@ -447,7 +454,7 @@ export class DatabaseStore {
       lastLogin: new Date().toISOString(),
     };
     this.users.set(school2Admin.id, school2Admin);
-    this.userPasswords.set(school2Admin.id, 'stjude123');
+    this.userPasswords.set(school2Admin.id, this.hashPassword('stjude123'));
 
     this.initializePrimarySchoolAcademicStructure('SCH-1002');
 
@@ -688,13 +695,29 @@ export class DatabaseStore {
 
     console.log(`[dbStore.verifyPassword] Checking password for user ${user.email}. Input length: ${cleanInput.length}`);
 
-    // Direct match
-    if (cleanInput === cleanStored) return true;
+    if (cleanStored.startsWith('scrypt$')) {
+      const [, salt, expectedHex] = cleanStored.split('$');
+      if (!salt || !expectedHex) return false;
+      const actual = scryptSync(cleanInput, salt, 64);
+      const expected = Buffer.from(expectedHex, 'hex');
+      return actual.length === expected.length && timingSafeEqual(actual, expected);
+    }
+
+    // One-time migration for legacy local test data that stored plaintext.
+    if (cleanInput === cleanStored) {
+      this.userPasswords.set(user.id, this.hashPassword(cleanInput));
+      this.saveToDisk();
+      return true;
+    }
 
     return false;
   }
 
   public createUser(userData: Omit<User, 'id' | 'createdAt'>, password: string): User {
+    const duplicate = Array.from(this.users.values()).some(
+      user => user.email.toLowerCase().trim() === userData.email.toLowerCase().trim()
+    );
+    if (duplicate) throw new Error('An account with this email address already exists.');
     const id = `usr-${Math.random().toString(36).substring(2, 9)}`;
     const newUser: User = {
       ...userData,
@@ -702,7 +725,7 @@ export class DatabaseStore {
       createdAt: new Date().toISOString(),
     };
     this.users.set(id, newUser);
-    this.userPasswords.set(id, password);
+    this.userPasswords.set(id, this.hashPassword(password));
     this.saveToDisk();
     return newUser;
   }

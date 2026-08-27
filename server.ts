@@ -9,6 +9,8 @@ import * as XLSX from 'xlsx';
 import { createWorker } from 'tesseract.js';
 import engData from '@tesseract.js-data/eng';
 import { PDFParse } from 'pdf-parse';
+import { randomBytes } from 'crypto';
+import { User } from './src/types.js';
 
 const __dirname = process.cwd();
 
@@ -20,6 +22,25 @@ async function startServer() {
 
   app.use(express.json({ limit: '25mb' }));
   app.use(express.urlencoded({ limit: '25mb', extended: true }));
+
+  const sessions = new Map<string, { userId: string; expiresAt: number }>();
+  const sessionDurationMs = 8 * 60 * 60 * 1000;
+  const getUserById = (userId: string) => db.getUsers(null).find(user => user.id === userId);
+  const getActor = (req: express.Request) => (req as express.Request & { authUser?: User }).authUser!;
+  const issueSession = (user: User) => {
+    const token = randomBytes(32).toString('base64url');
+    sessions.set(token, { userId: user.id, expiresAt: Date.now() + sessionDurationMs });
+    return token;
+  };
+  const requireRoles = (...roles: User['role'][]) => (
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction
+  ) => {
+    const actor = getActor(req);
+    if (!actor || !roles.includes(actor.role)) return res.status(403).json({ error: 'Access denied.' });
+    next();
+  };
 
   // --- API ROUTES ---
 
@@ -41,7 +62,7 @@ async function startServer() {
     const result = db.getUserByEmail(email);
     if (!result) {
       console.warn(`[Server /api/auth/login] User lookup failed for email: "${email}"`);
-      return res.status(401).json({ error: 'Invalid credentials. User email not found.' });
+      return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
     const { user, passwordHash } = result;
@@ -49,7 +70,11 @@ async function startServer() {
 
     if (!isPasswordValid) {
       console.warn(`[Server /api/auth/login] Password verification failed for user: ${user.email}`);
-      return res.status(401).json({ error: 'Invalid credentials. Password verification failed.' });
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    if (user.status !== 'Active') {
+      return res.status(403).json({ error: 'This account is disabled. Please contact your school administrator.' });
     }
 
     const school = user.schoolId ? db.getSchoolById(user.schoolId) : null;
@@ -71,13 +96,56 @@ async function startServer() {
     res.json({
       user,
       school,
-      token: `mock-jwt-token-${user.id}-${Date.now()}`
+      token: issueSession(user)
     });
   });
 
+  app.use('/api', (req, res, next) => {
+    const authorization = req.headers.authorization || '';
+    const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+    const session = token ? sessions.get(token) : undefined;
+    if (!session || session.expiresAt <= Date.now()) {
+      if (token) sessions.delete(token);
+      return res.status(401).json({ error: 'Authentication required.' });
+    }
+    const actor = getUserById(session.userId);
+    if (!actor || actor.status !== 'Active') {
+      sessions.delete(token);
+      return res.status(403).json({ error: 'This account is disabled.' });
+    }
+    const actorSchool = actor.schoolId ? db.getSchoolById(actor.schoolId) : null;
+    if (actorSchool && (actorSchool.status as string) === 'Disabled' && actor.role !== 'SUPER_ADMIN') {
+      sessions.delete(token);
+      return res.status(403).json({ error: 'This school account is disabled.' });
+    }
+    (req as express.Request & { authUser?: User }).authUser = actor;
+    next();
+  });
+
+  app.use('/api/schools/:schoolId', (req, res, next) => {
+    const actor = getActor(req);
+    const schoolId = req.params.schoolId;
+    if (actor.role !== 'SUPER_ADMIN' && actor.schoolId !== schoolId) {
+      return res.status(404).json({ error: 'Resource not found.' });
+    }
+    next();
+  });
+
+  app.use('/api/schools/:schoolId', (req, res, next) => {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+    const academicManagementPath = /\/(departments|subjects|grades|curriculum-map|teaching-assignments|hod-grade-assignments|academic-assignments|hod-phase-assignments)(\/|\?|$)/;
+    if (!academicManagementPath.test(req.originalUrl)) return next();
+    const actor = getActor(req);
+    const allowed = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD'];
+    if (!allowed.includes(actor.role)) return res.status(403).json({ error: 'Access denied.' });
+    next();
+  });
+
   const marksImportRoot = path.join(process.cwd(), 'data', 'mark-imports');
-  const getUserById = (userId: string) => db.getUsers(null).find(user => user.id === userId);
   const leadershipRoles = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD', 'GRADE_HEAD'];
+  const canAccessWorkspace = (actor: User, workspace: { schoolId: string; teacherUserId: string }) =>
+    actor.role === 'SUPER_ADMIN' ||
+    (actor.schoolId === workspace.schoolId && (leadershipRoles.includes(actor.role) || workspace.teacherUserId === actor.id));
   const canManageAssignment = (actorUserId: string, schoolId: string, assignmentId: string) => {
     const actor = getUserById(actorUserId);
     const assignment = db.getTeachingAssignments(schoolId).find(item => item.id === assignmentId);
@@ -146,7 +214,7 @@ async function startServer() {
   };
 
   // School Registration Wizard Endpoint
-  app.post('/api/schools/register', (req, res) => {
+  app.post('/api/schools/register', requireRoles('SUPER_ADMIN'), (req, res) => {
     try {
       const { schoolInfo, adminInfo } = req.body;
 
@@ -205,7 +273,7 @@ async function startServer() {
         message: 'School and Administrator created successfully',
         school: newSchool,
         user: newAdmin,
-        token: `mock-jwt-token-${newAdmin.id}-${Date.now()}`
+        token: null
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to register school' });
@@ -213,7 +281,7 @@ async function startServer() {
   });
 
   // Get Schools List (Super Admin or Public Selection)
-  app.get('/api/schools', (req, res) => {
+  app.get('/api/schools', requireRoles('SUPER_ADMIN'), (req, res) => {
     const schools = db.getSchools();
     res.json(schools);
   });
@@ -226,8 +294,9 @@ async function startServer() {
   });
 
   // Update School Profile & Branding
-  app.put('/api/schools/:schoolId', (req, res) => {
-    const { actorUser, updates, auditEntries } = req.body;
+  app.put('/api/schools/:schoolId', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL'), (req, res) => {
+    const { updates, auditEntries } = req.body;
+    const actorUser = getActor(req);
     const oldSchool = db.getSchoolById(req.params.schoolId);
     if (!oldSchool) return res.status(404).json({ error: 'School not found' });
 
@@ -258,9 +327,10 @@ async function startServer() {
   });
 
   // Complete First-Time Setup Wizard
-  app.post('/api/schools/:schoolId/first-time-setup', (req, res) => {
+  app.post('/api/schools/:schoolId/first-time-setup', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN'), (req, res) => {
     const { schoolId } = req.params;
-    const { actorUser, departments, subjects, grades, staffList } = req.body;
+    const { departments, subjects, grades, staffList } = req.body;
+    const actorUser = getActor(req);
 
     const school = db.getSchoolById(schoolId);
     if (!school) return res.status(404).json({ error: 'School not found' });
@@ -334,19 +404,26 @@ async function startServer() {
   });
 
   // Get Users for a School (STRICT TENANT ISOLATION)
-  app.get('/api/schools/:schoolId/users', (req, res) => {
+  app.get('/api/schools/:schoolId/users', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD', 'GRADE_HEAD'), (req, res) => {
     const { schoolId } = req.params;
     const users = db.getUsers(schoolId === 'ALL' ? null : schoolId);
-    res.json(users);
+    res.json(getActor(req).role === 'GRADE_HEAD' ? users.filter(user => user.role === 'TEACHER') : users);
   });
 
   // Create User in a School
-  app.post('/api/schools/:schoolId/users', (req, res) => {
+  app.post('/api/schools/:schoolId/users', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL'), (req, res) => {
     const { schoolId } = req.params;
-    const { actorUser, fullName, email, role, roles, password } = req.body;
+    const { fullName, email, role, roles, password } = req.body;
+    const actorUser = getActor(req);
 
-    if (!fullName || !email || (!role && (!roles || roles.length === 0))) {
-      return res.status(400).json({ error: 'Full name, email, and role are required' });
+    if (!fullName || !email || !password || (!role && (!roles || roles.length === 0))) {
+      return res.status(400).json({ error: 'Full name, email, password, and role are required' });
+    }
+    if (String(password).length < 12) {
+      return res.status(400).json({ error: 'Passwords must contain at least 12 characters.' });
+    }
+    if (db.getUserByEmail(email)) {
+      return res.status(409).json({ error: 'An account with this email address already exists.' });
     }
 
     const roleRanks: Record<string, number> = {
@@ -360,6 +437,14 @@ async function startServer() {
     };
 
     const userRoles: string[] = Array.isArray(roles) && roles.length > 0 ? roles : (role ? [role] : ['TEACHER']);
+    const validRoles = Object.keys(roleRanks);
+    if (userRoles.some(item => !validRoles.includes(item))) return res.status(400).json({ error: 'Invalid role selection.' });
+    if (userRoles.includes('SUPER_ADMIN') && actorUser.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Only a Platform Super Admin can assign that role.' });
+    }
+    if (userRoles.includes('SCHOOL_ADMIN') && !['SUPER_ADMIN', 'SCHOOL_ADMIN'].includes(actorUser.role)) {
+      return res.status(403).json({ error: 'Only a School Administrator can assign that role.' });
+    }
     const sortedRoles = [...userRoles].sort((a, b) => (roleRanks[a] || 99) - (roleRanks[b] || 99));
     const highestAuthorityRole = sortedRoles[0] as any;
 
@@ -372,7 +457,7 @@ async function startServer() {
         roles: userRoles as any,
         status: 'Active',
       },
-      password || 'staff123'
+      password
     );
 
     db.addAuditLog(
@@ -384,6 +469,29 @@ async function startServer() {
 
     res.status(201).json(newUser);
   });
+
+  app.patch(
+    '/api/schools/:schoolId/users/:userId/status',
+    requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL'),
+    (req, res) => {
+      const actor = getActor(req);
+      const { status } = req.body;
+      if (!['Active', 'Disabled'].includes(status)) {
+        return res.status(400).json({ error: 'Status must be Active or Disabled.' });
+      }
+      const target = db.getUsers(req.params.schoolId).find(user => user.id === req.params.userId);
+      if (!target) return res.status(404).json({ error: 'User not found.' });
+      if (target.role === 'SUPER_ADMIN' && actor.role !== 'SUPER_ADMIN') {
+        return res.status(403).json({ error: 'Access denied.' });
+      }
+      if (target.id === actor.id && status === 'Disabled') {
+        return res.status(409).json({ error: 'You cannot disable your own active session.' });
+      }
+      const updated = db.updateUser(target.id, target.schoolId, { status });
+      db.addAuditLog(req.params.schoolId, actor, status === 'Disabled' ? 'USER_DISABLED' : 'USER_ENABLED', `${target.fullName} was ${status.toLowerCase()} by ${actor.fullName}.`);
+      res.json(updated);
+    }
+  );
 
   // Get Full Academic Structure (Phases, Grades, Subjects, Classes, Curriculum Mappings)
   app.get('/api/schools/:schoolId/academic-structure', (req, res) => {
@@ -556,7 +664,7 @@ async function startServer() {
   // Student records are roster data, not login accounts.
   app.get('/api/schools/:schoolId/students', (req, res) => {
     const assignmentId = String(req.query.assignmentId || '');
-    const actorUserId = String(req.query.actorUserId || '');
+    const actorUserId = getActor(req).id;
     if (!assignmentId || !canManageAssignment(actorUserId, req.params.schoolId, assignmentId)) {
       return res.status(403).json({ error: 'You do not have access to this class roster.' });
     }
@@ -565,8 +673,9 @@ async function startServer() {
   });
 
   app.post('/api/schools/:schoolId/students', (req, res) => {
-    const { actorUserId, assignmentId, admissionNumber, fullName, guardianName, guardianContact } = req.body;
-    if (!canManageAssignment(String(actorUserId || ''), req.params.schoolId, String(assignmentId || ''))) {
+    const { assignmentId, admissionNumber, fullName, guardianName, guardianContact } = req.body;
+    const actorUserId = getActor(req).id;
+    if (!canManageAssignment(actorUserId, req.params.schoolId, String(assignmentId || ''))) {
       return res.status(403).json({ error: 'You cannot add students to this class.' });
     }
     if (!admissionNumber || !fullName) return res.status(400).json({ error: 'Admission number and full name are required.' });
@@ -588,8 +697,9 @@ async function startServer() {
   });
 
   app.put('/api/schools/:schoolId/students/:studentId', (req, res) => {
-    const { actorUserId, assignmentId, ...updates } = req.body;
-    if (!canManageAssignment(String(actorUserId || ''), req.params.schoolId, String(assignmentId || ''))) {
+    const { actorUserId: _ignoredActorUserId, assignmentId, ...updates } = req.body;
+    const actorUserId = getActor(req).id;
+    if (!canManageAssignment(actorUserId, req.params.schoolId, String(assignmentId || ''))) {
       return res.status(403).json({ error: 'You cannot edit this class roster.' });
     }
     try {
@@ -600,7 +710,7 @@ async function startServer() {
   });
 
   app.delete('/api/schools/:schoolId/students/:studentId', (req, res) => {
-    const actorUserId = String(req.query.actorUserId || '');
+    const actorUserId = getActor(req).id;
     const assignmentId = String(req.query.assignmentId || '');
     if (!canManageAssignment(actorUserId, req.params.schoolId, assignmentId)) {
       return res.status(403).json({ error: 'You cannot remove students from this class.' });
@@ -610,7 +720,7 @@ async function startServer() {
 
   app.get('/api/schools/:schoolId/student-marks', (req, res) => {
     const assignmentId = String(req.query.assignmentId || '');
-    const actorUserId = String(req.query.actorUserId || '');
+    const actorUserId = getActor(req).id;
     if (!canManageAssignment(actorUserId, req.params.schoolId, assignmentId)) {
       return res.status(403).json({ error: 'You cannot view marks for this assignment.' });
     }
@@ -618,9 +728,10 @@ async function startServer() {
   });
 
   app.post('/api/schools/:schoolId/marks-import/analyse', async (req, res) => {
-    const { actorUserId, assignmentId, fileName, mimeType, dataBase64 } = req.body;
+    const { assignmentId, fileName, mimeType, dataBase64 } = req.body;
+    const actorUserId = getActor(req).id;
     const schoolId = req.params.schoolId;
-    if (!canManageAssignment(String(actorUserId || ''), schoolId, String(assignmentId || ''))) {
+    if (!canManageAssignment(actorUserId, schoolId, String(assignmentId || ''))) {
       return res.status(403).json({ error: 'You cannot import marks for this assignment.' });
     }
     if (!fileName || !dataBase64) return res.status(400).json({ error: 'Choose a PDF, image, CSV, or Excel file.' });
@@ -674,9 +785,10 @@ async function startServer() {
   });
 
   app.post('/api/schools/:schoolId/marks-import/confirm', (req, res) => {
-    const { actorUserId, assignmentId, importId, assessmentTitle, term, totalMarks, rows } = req.body;
+    const { assignmentId, importId, assessmentTitle, term, totalMarks, rows } = req.body;
+    const actorUserId = getActor(req).id;
     const schoolId = req.params.schoolId;
-    if (!canManageAssignment(String(actorUserId || ''), schoolId, String(assignmentId || ''))) {
+    if (!canManageAssignment(actorUserId, schoolId, String(assignmentId || ''))) {
       return res.status(403).json({ error: 'You cannot save marks for this assignment.' });
     }
     const manifestPath = path.join(marksImportRoot, schoolId, `${importId}.json`);
@@ -687,13 +799,14 @@ async function startServer() {
     if (!assessmentTitle || !term || !Number.isFinite(numericTotal) || numericTotal <= 0) {
       return res.status(400).json({ error: 'Assessment title, term, and total marks are required.' });
     }
+    const assignment = db.getTeachingAssignments(schoolId).find(item => item.id === assignmentId)!;
+    const rosterStudentIds = new Set(db.getStudents(schoolId, assignment.classId).map(student => student.id));
     const validRows = (Array.isArray(rows) ? rows : []).filter(row =>
-      db.getStudentById(row.studentId)?.schoolId === schoolId && Number.isFinite(Number(row.score)) && Number(row.score) >= 0 && Number(row.score) <= numericTotal
+      rosterStudentIds.has(row.studentId) && Number.isFinite(Number(row.score)) && Number(row.score) >= 0 && Number(row.score) <= numericTotal
     );
     if (validRows.length === 0) return res.status(400).json({ error: 'Enter at least one valid student mark.' });
 
-    const actor = getUserById(actorUserId)!;
-    const assignment = db.getTeachingAssignments(schoolId).find(item => item.id === assignmentId)!;
+    const actor = getActor(req);
     const resource = db.createKnowledgeResource(schoolId, {
       title: `${assessmentTitle} – source marks sheet`,
       description: `Original ${manifest.fileName} used to capture ${validRows.length} marks for ${assignment.subjectName}, ${assignment.className}.`,
@@ -727,7 +840,7 @@ async function startServer() {
   });
 
   app.get('/api/schools/:schoolId/marks-import/:importId/file', (req, res) => {
-    const actorUserId = String(req.query.actorUserId || '');
+    const actorUserId = getActor(req).id;
     const manifestPath = path.join(marksImportRoot, req.params.schoolId, `${req.params.importId}.json`);
     if (!fs.existsSync(manifestPath)) return res.status(404).json({ error: 'File not found.' });
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -806,12 +919,13 @@ async function startServer() {
   // Assessment Workspaces
   app.get('/api/schools/:schoolId/assessment-workspaces', (req, res) => {
     const { phaseId, gradeId, subjectId, teacherUserId } = req.query;
+    const actor = getActor(req);
     const list = db.getAssessmentWorkspaces(req.params.schoolId, {
       phaseId: phaseId as string,
       gradeId: gradeId as string,
       subjectId: subjectId as string,
-      teacherUserId: teacherUserId as string,
-    });
+      teacherUserId: actor.role === 'TEACHER' ? actor.id : teacherUserId as string,
+    }).filter(workspace => canAccessWorkspace(actor, workspace));
     res.json(list);
   });
 
@@ -819,6 +933,16 @@ async function startServer() {
     const { phaseId, gradeId, subjectId, term, title, teacherUserId } = req.body;
     if (!phaseId || !gradeId || !subjectId || !term || !title || !teacherUserId) {
       return res.status(400).json({ error: 'Missing required assessment workspace fields' });
+    }
+    const actor = getActor(req);
+    if (actor.role === 'TEACHER' && teacherUserId !== actor.id) {
+      return res.status(403).json({ error: 'Teachers can only create their own assessment workspaces.' });
+    }
+    const validAssignment = db.getTeachingAssignments(req.params.schoolId, teacherUserId).some(assignment =>
+      assignment.phaseId === phaseId && assignment.gradeId === gradeId && assignment.subjectId === subjectId
+    );
+    if (!validAssignment) {
+      return res.status(400).json({ error: 'This teacher is not assigned to the selected grade and subject.' });
     }
     const workspace = db.createAssessmentWorkspace(req.params.schoolId, {
       phaseId,
@@ -833,11 +957,27 @@ async function startServer() {
   });
 
   app.patch('/api/schools/:schoolId/assessment-workspaces/:workspaceId/status', (req, res) => {
-    const { status, hodUserId, actorUser } = req.body;
+    const { status, hodUserId } = req.body;
+    const actorUser = getActor(req);
     if (!status) {
       return res.status(400).json({ error: 'Status is required' });
     }
     try {
+      const existing = db.getAssessmentWorkspaces(req.params.schoolId).find(item => item.id === req.params.workspaceId);
+      if (!existing) return res.status(404).json({ error: 'Assessment workspace not found.' });
+      if (!canAccessWorkspace(actorUser, existing)) return res.status(403).json({ error: 'Access denied.' });
+      if (existing.status === 'Archived') return res.status(409).json({ error: 'Archived assessments are read-only.' });
+
+      const reviewRoles = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD', 'GRADE_HEAD'];
+      const approvalRoles = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD'];
+      const archiveRoles = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL'];
+      const allowed =
+        (existing.status === 'Draft' && status === 'Submitted' && existing.teacherUserId === actorUser.id) ||
+        (['Submitted', 'Grade Head Review', 'DP Review'].includes(existing.status) && status === 'Draft' && reviewRoles.includes(actorUser.role)) ||
+        (['Submitted', 'Grade Head Review', 'DP Review'].includes(existing.status) && status === 'Approved' && approvalRoles.includes(actorUser.role)) ||
+        (existing.status === 'Approved' && status === 'Archived' && archiveRoles.includes(actorUser.role));
+      if (!allowed) return res.status(409).json({ error: `Invalid assessment transition from ${existing.status} to ${status}.` });
+
       const updated = db.updateAssessmentWorkspaceStatus(req.params.schoolId, req.params.workspaceId, status, hodUserId);
       if (actorUser) {
         db.addAuditLog(
@@ -855,7 +995,19 @@ async function startServer() {
 
   app.put('/api/schools/:schoolId/assessment-workspaces/:workspaceId', (req, res) => {
     try {
-      const updated = db.updateAssessmentWorkspace(req.params.schoolId, req.params.workspaceId, req.body.updates || req.body);
+      const actor = getActor(req);
+      const existing = db.getAssessmentWorkspaces(req.params.schoolId).find(item => item.id === req.params.workspaceId);
+      if (!existing) return res.status(404).json({ error: 'Assessment workspace not found.' });
+      if (!canAccessWorkspace(actor, existing)) return res.status(403).json({ error: 'Access denied.' });
+      if (existing.status === 'Archived') return res.status(409).json({ error: 'Archived assessments are read-only.' });
+      if (actor.role === 'TEACHER' && (existing.teacherUserId !== actor.id || existing.status !== 'Draft')) {
+        return res.status(403).json({ error: 'Teachers can only edit their own drafts.' });
+      }
+      const requestedUpdates = { ...(req.body.updates || req.body) };
+      delete requestedUpdates.status;
+      delete requestedUpdates.schoolId;
+      delete requestedUpdates.teacherUserId;
+      const updated = db.updateAssessmentWorkspace(req.params.schoolId, req.params.workspaceId, requestedUpdates);
       res.json(updated);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -863,14 +1015,24 @@ async function startServer() {
   });
 
   app.delete('/api/schools/:schoolId/assessment-workspaces/:workspaceId', (req, res) => {
-    const actorUser = req.body?.actorUser;
+    const actorUser = getActor(req);
+    const existing = db.getAssessmentWorkspaces(req.params.schoolId).find(item => item.id === req.params.workspaceId);
+    if (!existing) return res.status(404).json({ error: 'Assessment workspace not found.' });
+    if (!canAccessWorkspace(actorUser, existing)) return res.status(403).json({ error: 'Access denied.' });
+    if (['Approved', 'Archived'].includes(existing.status)) {
+      return res.status(409).json({ error: 'Approved and archived assessments cannot be deleted.' });
+    }
+    if (actorUser.role === 'TEACHER' && (existing.teacherUserId !== actorUser.id || existing.status !== 'Draft')) {
+      return res.status(403).json({ error: 'Teachers can only delete their own drafts.' });
+    }
     const success = db.deleteAssessmentWorkspace(req.params.schoolId, req.params.workspaceId, actorUser);
     res.json({ success });
   });
 
   // Toggle Disable/Enable School (Super Admin only)
-  app.post('/api/schools/:schoolId/disable', (req, res) => {
-    const { status, actorUser } = req.body;
+  app.post('/api/schools/:schoolId/disable', requireRoles('SUPER_ADMIN'), (req, res) => {
+    const { status } = req.body;
+    const actorUser = getActor(req);
     if (!status || (status !== 'Active' && status !== 'Disabled')) {
       return res.status(400).json({ error: 'Valid status ("Active" or "Disabled") is required' });
     }
@@ -889,7 +1051,8 @@ async function startServer() {
 
   app.post('/api/schools/:schoolId/knowledge-resources', (req, res) => {
     try {
-      const { actorUser, ...payload } = req.body;
+      const { actorUser: _ignoredActorUser, ...payload } = req.body;
+      const actorUser = getActor(req);
       const resource = db.createKnowledgeResource(req.params.schoolId, payload, actorUser);
       res.status(201).json(resource);
     } catch (err: any) {
@@ -898,21 +1061,30 @@ async function startServer() {
   });
 
   app.delete('/api/schools/:schoolId/knowledge-resources/:resourceId', (req, res) => {
-    const actorUser = req.body?.actorUser;
+    const actorUser = getActor(req);
+    const resource = db.getKnowledgeResources(req.params.schoolId).find(item => item.id === req.params.resourceId);
+    if (!resource) return res.status(404).json({ error: 'Resource not found.' });
+    const leadership = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD'];
+    if (resource.uploadedByUserId !== actorUser.id && !leadership.includes(actorUser.role)) {
+      return res.status(403).json({ error: 'You cannot delete this resource.' });
+    }
     const success = db.deleteKnowledgeResource(req.params.schoolId, req.params.resourceId, actorUser);
     res.json({ success });
   });
 
   // Audit Logs (Isolated per school or global for Super Admin)
-  app.get('/api/audit-logs', (req, res) => {
-    const schoolId = req.query.schoolId as string;
+  app.get('/api/audit-logs', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD'), (req, res) => {
+    const actor = getActor(req);
+    const requestedSchoolId = req.query.schoolId as string;
+    const schoolId = actor.role === 'SUPER_ADMIN' ? requestedSchoolId : actor.schoolId!;
     const logs = db.getAuditLogs(schoolId === 'PLATFORM' ? null : schoolId);
     res.json(logs);
   });
 
   // Platform Super Admin: Switch School Tenant Context Inspection
-  app.post('/api/platform/switch-school', (req, res) => {
-    const { actorUser, targetSchoolId } = req.body;
+  app.post('/api/platform/switch-school', requireRoles('SUPER_ADMIN'), (req, res) => {
+    const { targetSchoolId } = req.body;
+    const actorUser = getActor(req);
     const targetSchool = db.getSchoolById(targetSchoolId);
 
     if (!targetSchool) {
