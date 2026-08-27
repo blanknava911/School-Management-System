@@ -29,7 +29,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenLogin }) => (
           One secure entrance for your entire school.
         </h1>
         <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300">
-          Students, teachers, school leaders, and platform administrators use the same login. After authentication, each person sees only the tools and information their account permits.
+          Teachers, school leaders, and platform administrators use the same login. Student information is managed securely as academic records inside each school.
         </p>
         <button
           onClick={onOpenLogin}
@@ -50,8 +50,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenLogin }) => (
         </div>
         <div className="space-y-3 text-sm">
           {[
-            ['Student', 'Upload personal work and view feedback'],
-            ['Teacher', 'Manage assigned students and their work'],
+            ['Teacher', 'Manage assigned classes, students, marks, and evidence'],
             ['School leadership', 'Manage school users, academics, and settings'],
             ['Platform admin', 'Full platform and school oversight'],
           ].map(([role, access]) => (
