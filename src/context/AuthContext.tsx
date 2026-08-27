@@ -58,6 +58,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = () => {
+    ApiService.clearSession();
     setCurrentUser(null);
     setCurrentSchool(null);
     setSuperAdminInspectingSchool(null);
