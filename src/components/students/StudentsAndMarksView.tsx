@@ -52,15 +52,23 @@ export const StudentsAndMarksView: React.FC = () => {
   useEffect(() => {
     if (!activeSchool || !currentUser) return;
     setLoading(true);
-    Promise.all([
-      ApiService.getUsers(activeSchool.id),
-      ApiService.getTeachingAssignments(activeSchool.id),
-    ]).then(([users, assignmentList]) => {
-      const teacherList = users.filter(user => getUserRoles(user).includes('TEACHER'));
-      setTeachers(teacherList);
-      setAssignments(assignmentList);
-      setSelectedTeacherId(isTeacher ? currentUser.id : teacherList[0]?.id || '');
-    }).catch(err => setError(err.message)).finally(() => setLoading(false));
+    const load = async () => {
+      try {
+        const assignmentList = await ApiService.getTeachingAssignments(activeSchool.id, isTeacher ? currentUser.id : undefined);
+        const teacherList = isTeacher
+          ? [currentUser]
+          : (await ApiService.getUsers(activeSchool.id)).filter(user => getUserRoles(user).includes('TEACHER'));
+        setTeachers(teacherList);
+        setAssignments(assignmentList);
+        setSelectedTeacherId(isTeacher ? currentUser.id : teacherList[0]?.id || '');
+        setError('');
+      } catch (err: any) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
   }, [activeSchool, currentUser]);
 
   useEffect(() => {
