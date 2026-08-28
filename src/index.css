@@ -1,1 +1,6 @@
 @import "tailwindcss";
+
+:root { --school-primary: #1e3a8a; --school-secondary: #0d9488; }
+.school-accent { color: var(--school-primary); }
+.school-accent-bg { background-color: var(--school-primary); }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--school-primary); outline-offset: 2px; }
