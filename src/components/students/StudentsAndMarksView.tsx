@@ -38,6 +38,7 @@ export const StudentsAndMarksView: React.FC = () => {
   const [term, setTerm] = useState('Term 1');
   const [totalMarks, setTotalMarks] = useState(100);
   const [success, setSuccess] = useState('');
+  const [studentToDelete, setStudentToDelete] = useState<StudentRecord | null>(null);
 
   const isTeacher = currentUser?.role === 'TEACHER';
   const visibleAssignments = useMemo(
@@ -138,10 +139,40 @@ export const StudentsAndMarksView: React.FC = () => {
 
   const removeStudent = async (student: StudentRecord) => {
     if (!activeSchool || !currentUser || !selectedAssignmentId) return;
-    if (!window.confirm(`Remove ${student.fullName} from this school roster? Their saved marks will also be removed.`)) return;
     try {
       await ApiService.deleteStudent(activeSchool.id, student.id, selectedAssignmentId, currentUser.id);
+      setStudentToDelete(null);
+      setSuccess(`${student.fullName} was removed from this class.`);
       await loadRoster();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const resolveUnmatchedStudent = async (index: number) => {
+    if (!activeSchool || !currentUser || !selectedAssignmentId) return;
+    const row = unmatchedRows[index];
+    if (!row?.admissionNumber?.trim() || !row?.name?.trim()) {
+      setError('Enter an admission number and full name before adding the unmatched student.');
+      return;
+    }
+    try {
+      const created = await ApiService.createStudent(activeSchool.id, {
+        actorUserId: currentUser.id,
+        assignmentId: selectedAssignmentId,
+        admissionNumber: row.admissionNumber.trim(),
+        fullName: row.name.trim(),
+        guardianName: row.guardianName || '',
+        guardianContact: row.guardianContact || '',
+      });
+      setReviewRows(current => [...current, {
+        studentId: created.id, admissionNumber: created.admissionNumber, studentName: created.fullName,
+        extractedName: row.name, score: Number.isFinite(Number(row.score)) ? Number(row.score) : null,
+        confidence: 1, status: 'matched',
+      }]);
+      setStudents(current => [...current, created]);
+      setUnmatchedRows(current => current.filter((_, itemIndex) => itemIndex !== index));
+      setError('');
     } catch (err: any) {
       setError(err.message);
     }
@@ -279,7 +310,7 @@ export const StudentsAndMarksView: React.FC = () => {
                   <div className="min-w-0 flex-1"><div className="font-bold text-slate-900">{student.fullName}</div><div className="text-xs text-slate-500">Admission: {student.admissionNumber}{student.guardianContact ? ` · Guardian: ${student.guardianContact}` : ''}</div></div>
                   {latestMark && <div className="hidden rounded-lg bg-emerald-50 px-3 py-1.5 text-right sm:block"><div className="text-xs font-black text-emerald-800">{latestMark.score}/{latestMark.totalMarks}</div><div className="text-[10px] text-emerald-600">{latestMark.assessmentTitle}</div></div>}
                   <button onClick={() => openEdit(student)} className="rounded-lg p-2 text-slate-500 hover:bg-indigo-50 hover:text-indigo-700" aria-label={`Edit ${student.fullName}`}><Pencil className="h-4 w-4" /></button>
-                  <button onClick={() => removeStudent(student)} className="rounded-lg p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-700" aria-label={`Remove ${student.fullName}`}><Trash2 className="h-4 w-4" /></button>
+                  <button onClick={() => setStudentToDelete(student)} className="rounded-lg p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-700" aria-label={`Remove ${student.fullName}`}><Trash2 className="h-4 w-4" /></button>
                 </div>
               })}
             </div>
@@ -335,12 +366,16 @@ export const StudentsAndMarksView: React.FC = () => {
                   ))}
                 </tbody>
               </table>
-              {unmatchedRows.length > 0 && <div className="m-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">{unmatchedRows.length} extracted row(s) could not be matched to this class. Review the roster and enter those marks manually.</div>}
+              {unmatchedRows.length > 0 && <div className="m-4 space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900"><div className="font-black">{unmatchedRows.length} extracted student(s) need details before marks can be saved.</div>{unmatchedRows.map((row, index) => <div key={index} className="grid gap-2 rounded-lg bg-white p-3 sm:grid-cols-5"><input value={row.admissionNumber || ''} onChange={e => setUnmatchedRows(current => current.map((item, i) => i === index ? { ...item, admissionNumber: e.target.value } : item))} placeholder="Admission number *" className="rounded-lg border px-2 py-2" /><input value={row.name || ''} onChange={e => setUnmatchedRows(current => current.map((item, i) => i === index ? { ...item, name: e.target.value } : item))} placeholder="Full name *" className="rounded-lg border px-2 py-2" /><input value={row.guardianName || ''} onChange={e => setUnmatchedRows(current => current.map((item, i) => i === index ? { ...item, guardianName: e.target.value } : item))} placeholder="Guardian name" className="rounded-lg border px-2 py-2" /><input value={row.guardianContact || ''} onChange={e => setUnmatchedRows(current => current.map((item, i) => i === index ? { ...item, guardianContact: e.target.value } : item))} placeholder="Guardian contact" className="rounded-lg border px-2 py-2" /><button onClick={() => resolveUnmatchedStudent(index)} className="rounded-lg bg-amber-700 px-3 py-2 font-bold text-white">Add to class</button></div>)}</div>}
             </div>
 
-            <div className="flex items-center justify-between border-t p-5"><p className="max-w-xl text-xs text-slate-500">Saving creates student mark records and stores the original file in Knowledge Hub → Assessment Evidence.</p><div className="flex gap-2"><button onClick={() => setIsImportOpen(false)} className="rounded-xl border px-4 py-2 text-xs font-bold">Cancel</button><button disabled={isAnalysing || !importId} onClick={confirmImport} className="rounded-xl bg-emerald-600 px-5 py-2 text-xs font-black text-white disabled:opacity-50">Confirm and save marks</button></div></div>
+            <div className="flex items-center justify-between border-t p-5"><p className="max-w-xl text-xs text-slate-500">Saving creates student mark records and stores the original file in Knowledge Hub → Assessment Evidence.</p><div className="flex gap-2"><button onClick={() => setIsImportOpen(false)} className="rounded-xl border px-4 py-2 text-xs font-bold">Cancel</button><button disabled={isAnalysing || !importId || unmatchedRows.length > 0} onClick={confirmImport} className="rounded-xl bg-emerald-600 px-5 py-2 text-xs font-black text-white disabled:opacity-50">Confirm and save marks</button></div></div>
           </div>
         </div>
+      )}
+
+      {studentToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"><div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"><div className="flex items-center gap-3 text-rose-700"><AlertTriangle className="h-6 w-6" /><h3 className="text-lg font-black text-slate-900">Remove student?</h3></div><p className="mt-3 text-sm text-slate-600">Remove <strong>{studentToDelete.fullName}</strong> from this class? Their linked marks will also be removed. This action is recorded in the audit trail.</p><div className="mt-5 flex justify-end gap-2"><button onClick={() => setStudentToDelete(null)} className="rounded-xl border px-4 py-2 text-xs font-bold">Cancel</button><button onClick={() => removeStudent(studentToDelete)} className="rounded-xl bg-rose-600 px-4 py-2 text-xs font-black text-white">Remove student</button></div></div></div>
       )}
     </div>
   );
