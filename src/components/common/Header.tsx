@@ -37,6 +37,7 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
   const [notifications, setNotifications] = useState<NotificationItem[]>([
     {
       id: 'notif-1',
+      schoolId: activeSchool?.id,
       type: 'RETURNED',
       title: 'Assessment Returned for Revision',
       message: 'Grade 4 Mathematics Term 3 Test returned by HOD Mr. Sipho Nkosi. Formatting & Memo adjustments required.',
@@ -47,6 +48,7 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
     },
     {
       id: 'notif-2',
+      schoolId: activeSchool?.id,
       type: 'WORKFLOW',
       title: 'Assessment Approved',
       message: 'Grade 7 English FAL Literature Test signed off and approved by Principal Dr. M. Arthur.',
@@ -57,6 +59,7 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
     },
     {
       id: 'notif-3',
+      schoolId: activeSchool?.id,
       type: 'RESOURCE',
       title: 'New Knowledge Resource Uploaded',
       message: 'Mrs. Sarah Smith uploaded "CAPS Natural Sciences Grade 5 Project Exemplar".',
@@ -67,6 +70,7 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
     },
     {
       id: 'notif-4',
+      schoolId: activeSchool?.id,
       type: 'ANNOUNCEMENT',
       title: 'Term 3 Moderation Deadline',
       message: 'Reminder: All Departmental Moderation submissions must be completed before Friday 17:00 SAST.',
@@ -75,7 +79,10 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
     },
   ]);
 
-  const unreadCount = notifications.filter(n => n.isUnread).length;
+  const visibleNotifications = currentUser?.role === 'SUPER_ADMIN' && !superAdminInspectingSchool
+    ? notifications
+    : notifications.filter(notification => notification.schoolId === activeSchool?.id);
+  const unreadCount = visibleNotifications.filter(n => n.isUnread).length;
 
   const primaryColor = activeSchool?.primaryColor || '#1e3a8a';
 
@@ -304,7 +311,7 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
         isOpen={isNotificationsOpen}
         onClose={() => setIsNotificationsOpen(false)}
         setActiveTab={setActiveTab}
-        notifications={notifications}
+        notifications={visibleNotifications}
         onMarkAllAsRead={handleMarkAllNotificationsRead}
         onMarkAsRead={handleMarkNotificationRead}
       />
@@ -317,4 +324,3 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
     </header>
   );
 };
-
