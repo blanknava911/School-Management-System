@@ -41,6 +41,7 @@ export class DatabaseStore {
   private students: Map<string, StudentRecord> = new Map();
   private studentMarks: Map<string, StudentMark> = new Map();
   private auditLogs: AuditLog[] = [];
+  private remoteSave?: (state: Record<string, unknown>) => Promise<void>;
 
   private hashPassword(password: string): string {
     const salt = randomBytes(16).toString('hex');
@@ -55,6 +56,67 @@ export class DatabaseStore {
       this.seedData();
       this.saveToDisk();
     }
+    if (this.assignMissingTeacherHods()) this.saveToDisk();
+  }
+
+  private assignMissingTeacherHods(): boolean {
+    let changed = false;
+    for (const [id, user] of this.users.entries()) {
+      const roles = user.roles?.length ? user.roles : [user.role];
+      if (!user.schoolId || !roles.includes('TEACHER') || user.hodUserId) continue;
+      const hod = Array.from(this.users.values()).find(candidate =>
+        candidate.schoolId === user.schoolId && candidate.status === 'Active' && ((candidate.roles || [candidate.role]).includes('HOD'))
+      );
+      if (hod) {
+        this.users.set(id, { ...user, hodUserId: hod.id });
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  private buildDump(): Record<string, unknown> {
+    return {
+      schools: Array.from(this.schools.entries()),
+      users: Array.from(this.users.entries()),
+      userPasswords: Array.from(this.userPasswords.entries()),
+      departments: Array.from(this.departments.entries()),
+      phases: Array.from(this.phases.entries()),
+      subjects: Array.from(this.subjects.entries()),
+      grades: Array.from(this.grades.entries()),
+      classes: Array.from(this.classes.entries()),
+      curriculumMaps: Array.from(this.curriculumMaps.entries()),
+      teachingAssignments: Array.from(this.teachingAssignments.entries()),
+      hodPhaseAssignments: Array.from(this.hodPhaseAssignments.entries()),
+      hodGradeAssignments: Array.from(this.hodGradeAssignments.entries()),
+      academicAssignments: Array.from(this.academicAssignments.entries()),
+      assessmentWorkspaces: Array.from(this.assessmentWorkspaces.entries()),
+      knowledgeResources: Array.from(this.knowledgeResources.entries()),
+      students: Array.from(this.students.entries()),
+      studentMarks: Array.from(this.studentMarks.entries()),
+      auditLogs: this.auditLogs,
+    };
+  }
+
+  private applyDump(dump: any) {
+    if (Array.isArray(dump.schools)) this.schools = new Map(dump.schools);
+    if (Array.isArray(dump.users)) this.users = new Map(dump.users);
+    if (Array.isArray(dump.userPasswords)) this.userPasswords = new Map(dump.userPasswords);
+    if (Array.isArray(dump.departments)) this.departments = new Map(dump.departments);
+    if (Array.isArray(dump.phases)) this.phases = new Map(dump.phases);
+    if (Array.isArray(dump.subjects)) this.subjects = new Map(dump.subjects);
+    if (Array.isArray(dump.grades)) this.grades = new Map(dump.grades);
+    if (Array.isArray(dump.classes)) this.classes = new Map(dump.classes);
+    if (Array.isArray(dump.curriculumMaps)) this.curriculumMaps = new Map(dump.curriculumMaps);
+    if (Array.isArray(dump.teachingAssignments)) this.teachingAssignments = new Map(dump.teachingAssignments);
+    if (Array.isArray(dump.hodPhaseAssignments)) this.hodPhaseAssignments = new Map(dump.hodPhaseAssignments);
+    if (Array.isArray(dump.hodGradeAssignments)) this.hodGradeAssignments = new Map(dump.hodGradeAssignments);
+    if (Array.isArray(dump.academicAssignments)) this.academicAssignments = new Map(dump.academicAssignments);
+    if (Array.isArray(dump.assessmentWorkspaces)) this.assessmentWorkspaces = new Map(dump.assessmentWorkspaces);
+    if (Array.isArray(dump.knowledgeResources)) this.knowledgeResources = new Map(dump.knowledgeResources);
+    if (Array.isArray(dump.students)) this.students = new Map(dump.students);
+    if (Array.isArray(dump.studentMarks)) this.studentMarks = new Map(dump.studentMarks);
+    if (Array.isArray(dump.auditLogs)) this.auditLogs = dump.auditLogs;
   }
 
   private saveToDisk() {
@@ -64,27 +126,11 @@ export class DatabaseStore {
         fs.mkdirSync(dataDir, { recursive: true });
       }
       const dbFilePath = path.join(dataDir, 'db.json');
-      const dump = {
-        schools: Array.from(this.schools.entries()),
-        users: Array.from(this.users.entries()),
-        userPasswords: Array.from(this.userPasswords.entries()),
-        departments: Array.from(this.departments.entries()),
-        phases: Array.from(this.phases.entries()),
-        subjects: Array.from(this.subjects.entries()),
-        grades: Array.from(this.grades.entries()),
-        classes: Array.from(this.classes.entries()),
-        curriculumMaps: Array.from(this.curriculumMaps.entries()),
-        teachingAssignments: Array.from(this.teachingAssignments.entries()),
-        hodPhaseAssignments: Array.from(this.hodPhaseAssignments.entries()),
-        hodGradeAssignments: Array.from(this.hodGradeAssignments.entries()),
-        academicAssignments: Array.from(this.academicAssignments.entries()),
-        assessmentWorkspaces: Array.from(this.assessmentWorkspaces.entries()),
-        knowledgeResources: Array.from(this.knowledgeResources.entries()),
-        students: Array.from(this.students.entries()),
-        studentMarks: Array.from(this.studentMarks.entries()),
-        auditLogs: this.auditLogs,
-      };
+      const dump = this.buildDump();
       fs.writeFileSync(dbFilePath, JSON.stringify(dump, null, 2), 'utf-8');
+      if (this.remoteSave) {
+        void this.remoteSave(dump).catch(err => console.error('[dbStore] Firestore persistence failed:', err));
+      }
     } catch (err) {
       console.error('[dbStore] Failed to save database to disk:', err);
     }
@@ -98,24 +144,7 @@ export class DatabaseStore {
       if (!raw.trim()) return false;
       const dump = JSON.parse(raw);
 
-      if (Array.isArray(dump.schools)) this.schools = new Map(dump.schools);
-      if (Array.isArray(dump.users)) this.users = new Map(dump.users);
-      if (Array.isArray(dump.userPasswords)) this.userPasswords = new Map(dump.userPasswords);
-      if (Array.isArray(dump.departments)) this.departments = new Map(dump.departments);
-      if (Array.isArray(dump.phases)) this.phases = new Map(dump.phases);
-      if (Array.isArray(dump.subjects)) this.subjects = new Map(dump.subjects);
-      if (Array.isArray(dump.grades)) this.grades = new Map(dump.grades);
-      if (Array.isArray(dump.classes)) this.classes = new Map(dump.classes);
-      if (Array.isArray(dump.curriculumMaps)) this.curriculumMaps = new Map(dump.curriculumMaps);
-      if (Array.isArray(dump.teachingAssignments)) this.teachingAssignments = new Map(dump.teachingAssignments);
-      if (Array.isArray(dump.hodPhaseAssignments)) this.hodPhaseAssignments = new Map(dump.hodPhaseAssignments);
-      if (Array.isArray(dump.hodGradeAssignments)) this.hodGradeAssignments = new Map(dump.hodGradeAssignments);
-      if (Array.isArray(dump.academicAssignments)) this.academicAssignments = new Map(dump.academicAssignments);
-      if (Array.isArray(dump.assessmentWorkspaces)) this.assessmentWorkspaces = new Map(dump.assessmentWorkspaces);
-      if (Array.isArray(dump.knowledgeResources)) this.knowledgeResources = new Map(dump.knowledgeResources);
-      if (Array.isArray(dump.students)) this.students = new Map(dump.students);
-      if (Array.isArray(dump.studentMarks)) this.studentMarks = new Map(dump.studentMarks);
-      if (Array.isArray(dump.auditLogs)) this.auditLogs = dump.auditLogs;
+      this.applyDump(dump);
 
       // Students are academic records, never login accounts. Remove legacy student users.
       for (const [id, user] of this.users.entries()) {
@@ -131,6 +160,22 @@ export class DatabaseStore {
       console.error('[dbStore] Load from disk failed:', err);
       return false;
     }
+  }
+
+  public async configureRemotePersistence(
+    load: () => Promise<Record<string, unknown> | null>,
+    save: (state: Record<string, unknown>) => Promise<void>
+  ): Promise<boolean> {
+    const remoteState = await load();
+    if (remoteState && Array.isArray((remoteState as any).schools)) {
+      this.applyDump(remoteState);
+      console.log('[dbStore] Firestore platform state restored.');
+    } else {
+      await save(this.buildDump());
+      console.log('[dbStore] Firestore platform state initialized from local seed data.');
+    }
+    this.remoteSave = save;
+    return true;
   }
 
   private seedData() {
@@ -741,6 +786,88 @@ export class DatabaseStore {
     this.users.set(userId, updated);
     this.saveToDisk();
     return updated;
+  }
+
+  public updateUserCredentials(
+    userId: string,
+    schoolId: string | null,
+    updates: Partial<User>,
+    password?: string
+  ): User {
+    const current = this.users.get(userId);
+    if (!current) throw new Error('User not found.');
+    if (schoolId !== null && current.schoolId !== schoolId) {
+      throw new Error('Access denied: Cannot modify user belonging to another school');
+    }
+    const nextEmail = String(updates.email || current.email).trim().toLowerCase();
+    const duplicate = Array.from(this.users.values()).some(user =>
+      user.id !== userId && user.email.trim().toLowerCase() === nextEmail
+    );
+    if (duplicate) throw new Error('An account with this email address already exists.');
+    const updated: User = {
+      ...current,
+      ...updates,
+      id: current.id,
+      schoolId: current.schoolId,
+      email: nextEmail,
+    };
+    this.users.set(userId, updated);
+    if (password) this.userPasswords.set(userId, this.hashPassword(password));
+    this.saveToDisk();
+    return updated;
+  }
+
+  public replaceHod(schoolId: string, outgoingHodUserId: string, replacementHodUserId: string) {
+    if (outgoingHodUserId === replacementHodUserId) throw new Error('Choose a different replacement HOD.');
+    const outgoing = this.users.get(outgoingHodUserId);
+    const replacement = this.users.get(replacementHodUserId);
+    if (!outgoing || outgoing.schoolId !== schoolId) throw new Error('Outgoing HOD was not found.');
+    if (!replacement || replacement.schoolId !== schoolId) throw new Error('Replacement HOD was not found.');
+    const replacementRoles = replacement.roles?.length ? replacement.roles : [replacement.role];
+    if (!replacementRoles.includes('HOD')) throw new Error('The replacement user must have the HOD role.');
+
+    let teachersTransferred = 0;
+    for (const [id, user] of this.users.entries()) {
+      if (user.schoolId === schoolId && user.hodUserId === outgoingHodUserId) {
+        this.users.set(id, { ...user, hodUserId: replacementHodUserId });
+        teachersTransferred += 1;
+      }
+    }
+    for (const [id, department] of this.departments.entries()) {
+      if (department.schoolId === schoolId && department.hodUserId === outgoingHodUserId) {
+        this.departments.set(id, { ...department, hodUserId: replacementHodUserId });
+      }
+    }
+    for (const [id, workspace] of this.assessmentWorkspaces.entries()) {
+      if (workspace.schoolId === schoolId && workspace.hodUserId === outgoingHodUserId) {
+        this.assessmentWorkspaces.set(id, { ...workspace, hodUserId: replacementHodUserId });
+      }
+    }
+    for (const [id, assignment] of this.hodGradeAssignments.entries()) {
+      if (assignment.schoolId === schoolId && assignment.hodUserId === outgoingHodUserId) {
+        this.hodGradeAssignments.delete(id);
+        const replacementId = `hga-${schoolId}-${replacementHodUserId}-${assignment.gradeId}`;
+        this.hodGradeAssignments.set(replacementId, { ...assignment, id: replacementId, hodUserId: replacementHodUserId });
+      }
+    }
+    for (const [id, assignment] of this.hodPhaseAssignments.entries()) {
+      if (assignment.schoolId === schoolId && assignment.hodUserId === outgoingHodUserId) {
+        this.hodPhaseAssignments.delete(id);
+        const replacementId = `hpa-${schoolId}-${replacementHodUserId}-${assignment.phaseId}`;
+        this.hodPhaseAssignments.set(replacementId, { ...assignment, id: replacementId, hodUserId: replacementHodUserId });
+      }
+    }
+    for (const [id, assignment] of this.academicAssignments.entries()) {
+      if (assignment.schoolId === schoolId && assignment.role === 'HOD' && assignment.userId === outgoingHodUserId) {
+        this.academicAssignments.set(id, {
+          ...assignment,
+          userId: replacementHodUserId,
+          userName: replacement.fullName,
+        });
+      }
+    }
+    this.saveToDisk();
+    return { outgoing, replacement, teachersTransferred };
   }
 
   // --- ACADEMIC PHASES (FOUNDATION, INTERMEDIATE, SENIOR) ---
@@ -1373,8 +1500,8 @@ export class DatabaseStore {
     return Array.from(this.knowledgeResources.values()).filter(r => r.schoolId === schoolId);
   }
 
-  public createKnowledgeResource(schoolId: string, payload: Omit<KnowledgeResource, 'id' | 'schoolId' | 'createdAt'>, actorUser?: User): KnowledgeResource {
-    const id = `res-${Math.random().toString(36).substring(2, 8)}`;
+  public createKnowledgeResource(schoolId: string, payload: Omit<KnowledgeResource, 'id' | 'schoolId' | 'createdAt'>, actorUser?: User, suppliedId?: string): KnowledgeResource {
+    const id = suppliedId || `res-${Math.random().toString(36).substring(2, 8)}`;
     const resource: KnowledgeResource = {
       ...payload,
       id,
