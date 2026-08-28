@@ -11,7 +11,7 @@ export type ModuleName =
   | 'knowledge_hub'
   | 'templates'
   | 'audit_trail'
-  | 'reports'
+  | 'roles_permissions'
   | 'school_settings'
   | 'platform_settings';
 
@@ -125,6 +125,9 @@ export function canAccessModule(user: User | null, module: ModuleName): boolean 
       case 'users':
         return role === 'SUPER_ADMIN' || role === 'SCHOOL_ADMIN' || role === 'PRINCIPAL';
 
+      case 'roles_permissions':
+        return role === 'SUPER_ADMIN' || role === 'SCHOOL_ADMIN';
+
       case 'school_profile':
         return (
           role === 'SUPER_ADMIN' ||
@@ -155,7 +158,6 @@ export function canAccessModule(user: User | null, module: ModuleName): boolean 
       case 'grades':
       case 'subjects':
       case 'teaching_assignments':
-      case 'reports':
         return true;
 
       case 'assessment_workspace':
