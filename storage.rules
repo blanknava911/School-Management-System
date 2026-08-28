@@ -1,8 +1,9 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // File access remains server-only until tenant-scoped Storage paths and
-    // Firebase ID-token verification are implemented end to end.
+    // Files use schools/<schoolId>/... paths and are served by the authenticated
+    // Express API. Direct client access stays disabled; Firebase Admin performs
+    // tenant and role checks before reading or writing an object.
     match /{allPaths=**} {
       allow read, write: if false;
     }
