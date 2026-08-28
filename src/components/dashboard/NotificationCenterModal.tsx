@@ -14,6 +14,7 @@ import {
 
 export interface NotificationItem {
   id: string;
+  schoolId?: string;
   type: 'RETURNED' | 'COMMENT' | 'WORKFLOW' | 'RESOURCE' | 'ANNOUNCEMENT' | 'SYSTEM';
   title: string;
   message: string;
