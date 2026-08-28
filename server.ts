@@ -11,12 +11,21 @@ import engData from '@tesseract.js-data/eng';
 import { PDFParse } from 'pdf-parse';
 import { randomBytes } from 'crypto';
 import { User } from './src/types.js';
+import {
+  downloadSchoolFile,
+  getFirebaseServices,
+  loadPlatformState,
+  savePlatformState,
+  uploadSchoolFile,
+} from './src/server/firebaseAdmin.js';
 
 const __dirname = process.cwd();
 
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
 async function startServer() {
+  const firebase = getFirebaseServices();
+  if (firebase) await db.configureRemotePersistence(loadPlatformState, savePlatformState);
   const app = express();
   const PORT = 3000;
 
@@ -24,6 +33,7 @@ async function startServer() {
   app.use(express.urlencoded({ limit: '25mb', extended: true }));
 
   const sessions = new Map<string, { userId: string; expiresAt: number }>();
+  const loginAttempts = new Map<string, { attempts: number; resetAt: number }>();
   const sessionDurationMs = 8 * 60 * 60 * 1000;
   const getUserById = (userId: string) => db.getUsers(null).find(user => user.id === userId);
   const getActor = (req: express.Request) => (req as express.Request & { authUser?: User }).authUser!;
@@ -31,6 +41,10 @@ async function startServer() {
     const token = randomBytes(32).toString('base64url');
     sessions.set(token, { userId: user.id, expiresAt: Date.now() + sessionDurationMs });
     return token;
+  };
+  const revokeUserSessions = async (user: User) => {
+    for (const [token, session] of sessions) if (session.userId === user.id) sessions.delete(token);
+    if (firebase && user.firebaseUid) await firebase.auth.revokeRefreshTokens(user.firebaseUid).catch(() => undefined);
   };
   const requireRoles = (...roles: User['role'][]) => (
     req: express.Request,
@@ -52,6 +66,12 @@ async function startServer() {
   // Login
   app.post('/api/auth/login', (req, res) => {
     const { email, password } = req.body;
+    const rateKey = `${req.ip}:${String(email || '').trim().toLowerCase()}`;
+    const now = Date.now();
+    const attempt = loginAttempts.get(rateKey);
+    if (attempt && attempt.resetAt > now && attempt.attempts >= 5) {
+      return res.status(429).json({ error: 'Too many login attempts. Try again in 15 minutes.' });
+    }
     console.log(`[Server /api/auth/login] Auth attempt received for email: "${email}"`);
 
     if (!email || !password) {
@@ -61,6 +81,7 @@ async function startServer() {
 
     const result = db.getUserByEmail(email);
     if (!result) {
+      loginAttempts.set(rateKey, { attempts: (attempt?.resetAt || 0) > now ? attempt!.attempts + 1 : 1, resetAt: now + 15 * 60 * 1000 });
       console.warn(`[Server /api/auth/login] User lookup failed for email: "${email}"`);
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
@@ -69,6 +90,7 @@ async function startServer() {
     const isPasswordValid = db.verifyPassword(user, password, passwordHash);
 
     if (!isPasswordValid) {
+      loginAttempts.set(rateKey, { attempts: (attempt?.resetAt || 0) > now ? attempt!.attempts + 1 : 1, resetAt: now + 15 * 60 * 1000 });
       console.warn(`[Server /api/auth/login] Password verification failed for user: ${user.email}`);
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
@@ -90,6 +112,7 @@ async function startServer() {
       'USER_LOGIN',
       `User ${user.fullName} (${user.role}) logged in successfully.`
     );
+    loginAttempts.delete(rateKey);
 
     console.log(`[Server /api/auth/login] LOGIN SUCCESSFUL: ${user.fullName} (${user.role}) @ ${school ? school.name : 'Platform Super Admin'}`);
 
@@ -100,18 +123,38 @@ async function startServer() {
     });
   });
 
-  app.use('/api', (req, res, next) => {
+  app.post('/api/auth/firebase-session', async (req, res) => {
+    if (!firebase) return res.status(503).json({ error: 'Firebase authentication is not configured.' });
+    const idToken = String(req.body.idToken || '');
+    if (!idToken) return res.status(400).json({ error: 'Firebase ID token is required.' });
+    try {
+      const decoded = await firebase.auth.verifyIdToken(idToken, true);
+      const result = decoded.email ? db.getUserByEmail(decoded.email) : null;
+      if (!result || result.user.status !== 'Active') return res.status(403).json({ error: 'This account is not active on the platform.' });
+      const user = db.updateUser(result.user.id, result.user.schoolId, { firebaseUid: decoded.uid }) || result.user;
+      const school = user.schoolId ? db.getSchoolById(user.schoolId) : null;
+      if (school && (school.status as string) === 'Disabled' && user.role !== 'SUPER_ADMIN') return res.status(403).json({ error: 'This school account is disabled.' });
+      db.addAuditLog(user.schoolId, user, 'USER_LOGIN', `${user.fullName} logged in with Firebase Authentication.`);
+      res.json({ user, school, token: idToken });
+    } catch {
+      res.status(401).json({ error: 'The Firebase session is invalid or has been revoked.' });
+    }
+  });
+
+  app.use('/api', async (req, res, next) => {
     const authorization = req.headers.authorization || '';
     const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
     const session = token ? sessions.get(token) : undefined;
-    if (!session || session.expiresAt <= Date.now()) {
-      if (token) sessions.delete(token);
-      return res.status(401).json({ error: 'Authentication required.' });
+    let actor = session && session.expiresAt > Date.now() ? getUserById(session.userId) : undefined;
+    if (!actor && firebase && token) {
+      try {
+        const decoded = await firebase.auth.verifyIdToken(token, true);
+        actor = db.getUsers(null).find(user => user.firebaseUid === decoded.uid || (!!decoded.email && user.email.toLowerCase() === decoded.email.toLowerCase()));
+      } catch { /* handled below */ }
     }
-    const actor = getUserById(session.userId);
     if (!actor || actor.status !== 'Active') {
-      sessions.delete(token);
-      return res.status(403).json({ error: 'This account is disabled.' });
+      if (token) sessions.delete(token);
+      return res.status(401).json({ error: 'Authentication required or session revoked.' });
     }
     const actorSchool = actor.schoolId ? db.getSchoolById(actor.schoolId) : null;
     if (actorSchool && (actorSchool.status as string) === 'Disabled' && actor.role !== 'SUPER_ADMIN') {
@@ -142,6 +185,38 @@ async function startServer() {
   });
 
   const marksImportRoot = path.join(process.cwd(), 'data', 'mark-imports');
+  const uploadedFilesRoot = path.join(process.cwd(), 'data', 'uploaded-files');
+  const decodeUpload = (fileName: unknown, dataBase64: unknown) => {
+    if (!fileName || !dataBase64) throw new Error('Choose a file to upload.');
+    const data = Buffer.from(String(dataBase64), 'base64');
+    if (!data.length) throw new Error('The selected file is empty.');
+    if (data.length > 15 * 1024 * 1024) throw new Error('The file must be 15 MB or smaller.');
+    return data;
+  };
+  const saveUploadedFile = async (schoolId: string, category: 'knowledge' | 'assessments', objectId: string, fileName: string, mimeType: string, data: Buffer) => {
+    const remotePath = await uploadSchoolFile(schoolId, category, objectId, fileName, mimeType, data);
+    if (remotePath) return remotePath;
+    const safeName = path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, '_').slice(-120);
+    const relativePath = path.join(schoolId, category, objectId, safeName);
+    const absolutePath = path.join(uploadedFilesRoot, relativePath);
+    fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+    fs.writeFileSync(absolutePath, data);
+    return relativePath.replace(/\\/g, '/');
+  };
+  const sendUploadedFile = async (res: express.Response, objectPath: string, downloadName: string, mimeType?: string) => {
+    const remote = await downloadSchoolFile(objectPath);
+    if (remote) {
+      res.type(remote.contentType).attachment(downloadName).send(remote.data);
+      return;
+    }
+    const absolutePath = path.resolve(uploadedFilesRoot, objectPath);
+    if (!absolutePath.startsWith(path.resolve(uploadedFilesRoot)) || !fs.existsSync(absolutePath)) {
+      res.status(404).json({ error: 'File not found.' });
+      return;
+    }
+    if (mimeType) res.type(mimeType);
+    res.download(absolutePath, downloadName);
+  };
   const leadershipRoles = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD', 'GRADE_HEAD'];
   const canAccessWorkspace = (actor: User, workspace: { schoolId: string; teacherUserId: string }) =>
     actor.role === 'SUPER_ADMIN' ||
@@ -376,6 +451,12 @@ async function startServer() {
 
     // Add staff
     if (Array.isArray(staffList)) {
+      const existingHod = db.getUsers(schoolId).find(user => (user.roles || [user.role]).includes('HOD'));
+      const includesTeacher = staffList.some(staff => (staff.roles || [staff.role || 'TEACHER']).includes('TEACHER'));
+      const includesHod = staffList.some(staff => (staff.roles || [staff.role]).includes('HOD'));
+      if (includesTeacher && !existingHod && !includesHod) {
+        return res.status(400).json({ error: 'Add a Departmental Head before adding teachers.' });
+      }
       for (const st of staffList) {
         db.createUser(
           {
@@ -387,6 +468,12 @@ async function startServer() {
           },
           st.password || 'password123'
         );
+      }
+      const defaultHod = db.getUsers(schoolId).find(user => user.status === 'Active' && (user.roles || [user.role]).includes('HOD'));
+      if (defaultHod) {
+        for (const teacher of db.getUsers(schoolId).filter(user => (user.roles || [user.role]).includes('TEACHER') && !user.hodUserId)) {
+          db.updateUser(teacher.id, schoolId, { hodUserId: defaultHod.id });
+        }
       }
     }
 
@@ -413,7 +500,7 @@ async function startServer() {
   // Create User in a School
   app.post('/api/schools/:schoolId/users', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL'), (req, res) => {
     const { schoolId } = req.params;
-    const { fullName, email, role, roles, password } = req.body;
+    const { fullName, email, role, roles, password, hodUserId } = req.body;
     const actorUser = getActor(req);
 
     if (!fullName || !email || !password || (!role && (!roles || roles.length === 0))) {
@@ -447,6 +534,10 @@ async function startServer() {
     }
     const sortedRoles = [...userRoles].sort((a, b) => (roleRanks[a] || 99) - (roleRanks[b] || 99));
     const highestAuthorityRole = sortedRoles[0] as any;
+    if (userRoles.includes('TEACHER')) {
+      const hod = db.getUsers(schoolId).find(user => user.id === hodUserId && getUserById(user.id)?.status === 'Active' && (user.role === 'HOD' || user.roles?.includes('HOD')));
+      if (!hod) return res.status(400).json({ error: 'Every teacher must be assigned to an active Departmental Head.' });
+    }
 
     const newUser = db.createUser(
       {
@@ -455,6 +546,8 @@ async function startServer() {
         email,
         role: highestAuthorityRole,
         roles: userRoles as any,
+        hodUserId: userRoles.includes('TEACHER') ? hodUserId : undefined,
+        createdByUserId: actorUser.id,
         status: 'Active',
       },
       password
@@ -468,6 +561,51 @@ async function startServer() {
     );
 
     res.status(201).json(newUser);
+  });
+
+  app.put('/api/schools/:schoolId/users/:userId', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL'), async (req, res) => {
+    const actor = getActor(req);
+    const target = db.getUsers(req.params.schoolId).find(user => user.id === req.params.userId);
+    if (!target) return res.status(404).json({ error: 'User not found.' });
+    const { fullName, email, password, roles, role, hodUserId, status, tutorialCompletedAt } = req.body;
+    if (password && String(password).length < 12) return res.status(400).json({ error: 'Passwords must contain at least 12 characters.' });
+    const selectedRoles = Array.isArray(roles) && roles.length ? roles : (role ? [role] : target.roles || [target.role]);
+    if (selectedRoles.includes('SUPER_ADMIN') && actor.role !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Only a Platform Super Admin can assign that role.' });
+    if (selectedRoles.includes('TEACHER')) {
+      const hod = db.getUsers(req.params.schoolId).find(user => user.id === hodUserId && user.status === 'Active' && (user.role === 'HOD' || user.roles?.includes('HOD')));
+      if (!hod) return res.status(400).json({ error: 'Every teacher must be assigned to an active Departmental Head.' });
+    }
+    try {
+      const roleRanks: Record<string, number> = { SUPER_ADMIN: 1, SCHOOL_ADMIN: 2, PRINCIPAL: 3, DEPUTY_PRINCIPAL: 4, HOD: 5, GRADE_HEAD: 6, TEACHER: 7 };
+      const highestRole = [...selectedRoles].sort((a, b) => (roleRanks[a] || 99) - (roleRanks[b] || 99))[0];
+      const updated = db.updateUserCredentials(target.id, target.schoolId, {
+        fullName: fullName ?? target.fullName,
+        email: email ?? target.email,
+        roles: selectedRoles,
+        role: highestRole,
+        hodUserId: selectedRoles.includes('TEACHER') ? hodUserId : undefined,
+        status: status ?? target.status,
+        tutorialCompletedAt: tutorialCompletedAt ?? target.tutorialCompletedAt,
+      }, password);
+      if (!updated) return res.status(404).json({ error: 'User not found.' });
+      if (password || status === 'Disabled') await revokeUserSessions(updated);
+      db.addAuditLog(req.params.schoolId, actor, 'USER_UPDATED', `${target.fullName}'s account details were updated by ${actor.fullName}.`);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(409).json({ error: error.message || 'Could not update this account.' });
+    }
+  });
+
+  app.post('/api/schools/:schoolId/hod-replacement', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL'), (req, res) => {
+    const { outgoingHodUserId, replacementHodUserId } = req.body;
+    const users = db.getUsers(req.params.schoolId);
+    const isHod = (id: string) => users.some(user => user.id === id && (user.role === 'HOD' || user.roles?.includes('HOD')));
+    if (!outgoingHodUserId || !replacementHodUserId || outgoingHodUserId === replacementHodUserId || !isHod(outgoingHodUserId) || !isHod(replacementHodUserId)) {
+      return res.status(400).json({ error: 'Choose two different valid Departmental Heads.' });
+    }
+    const result = db.replaceHod(req.params.schoolId, outgoingHodUserId, replacementHodUserId);
+    db.addAuditLog(req.params.schoolId, getActor(req), 'HOD_REPLACED', `${result.teachersTransferred} teacher assignments transferred to the replacement Departmental Head.`);
+    res.json(result);
   });
 
   app.patch(
@@ -587,7 +725,7 @@ async function startServer() {
     res.json({ grades, classes });
   });
 
-  app.post('/api/schools/:schoolId/grades', (req, res) => {
+  app.post('/api/schools/:schoolId/grades', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL'), (req, res) => {
     const { phaseId, name, code } = req.body;
     if (!phaseId || !name) {
       return res.status(400).json({ error: 'Phase ID and Grade Name are required' });
@@ -596,7 +734,7 @@ async function startServer() {
     res.status(201).json(grade);
   });
 
-  app.put('/api/schools/:schoolId/grades/:gradeId', (req, res) => {
+  app.put('/api/schools/:schoolId/grades/:gradeId', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL'), (req, res) => {
     try {
       const grade = db.updateGrade(req.params.schoolId, req.params.gradeId, req.body);
       res.json(grade);
@@ -605,7 +743,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/schools/:schoolId/grades/:gradeId/archive', (req, res) => {
+  app.post('/api/schools/:schoolId/grades/:gradeId/archive', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL'), (req, res) => {
     try {
       const grade = db.archiveGrade(req.params.schoolId, req.params.gradeId);
       res.json(grade);
@@ -614,7 +752,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/schools/:schoolId/grades/:gradeId/restore', (req, res) => {
+  app.post('/api/schools/:schoolId/grades/:gradeId/restore', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL'), (req, res) => {
     try {
       const grade = db.restoreGrade(req.params.schoolId, req.params.gradeId);
       res.json(grade);
@@ -715,7 +853,12 @@ async function startServer() {
     if (!canManageAssignment(actorUserId, req.params.schoolId, assignmentId)) {
       return res.status(403).json({ error: 'You cannot remove students from this class.' });
     }
-    res.json({ success: db.deleteStudent(req.params.schoolId, req.params.studentId) });
+    const assignment = db.getTeachingAssignments(req.params.schoolId).find(item => item.id === assignmentId)!;
+    const student = db.getStudents(req.params.schoolId, assignment.classId).find(item => item.id === req.params.studentId);
+    if (!student) return res.status(404).json({ error: 'Student was not found in this class.' });
+    const success = db.deleteStudent(req.params.schoolId, req.params.studentId);
+    db.addAuditLog(req.params.schoolId, getActor(req), 'STUDENT_REMOVED', `${student.fullName} was removed from ${assignment.className || 'the class'} and linked marks were removed.`);
+    res.json({ success });
   });
 
   app.get('/api/schools/:schoolId/student-marks', (req, res) => {
@@ -758,7 +901,8 @@ async function startServer() {
     const safeExtension = extension.replace(/[^.a-z0-9]/gi, '').slice(0, 10);
     const storedName = `${importId}${safeExtension}`;
     fs.writeFileSync(path.join(schoolDir, storedName), buffer);
-    const manifest = { importId, schoolId, assignmentId, actorUserId, fileName: path.basename(fileName), mimeType, storedName, size: buffer.length };
+    const objectPath = await uploadSchoolFile(schoolId, 'marks-imports', importId, String(fileName), String(mimeType || ''), buffer);
+    const manifest = { importId, schoolId, assignmentId, actorUserId, fileName: path.basename(fileName), mimeType, storedName, size: buffer.length, objectPath };
     fs.writeFileSync(path.join(schoolDir, `${importId}.json`), JSON.stringify(manifest, null, 2), 'utf8');
 
     const reviewRows = roster.map(student => {
@@ -820,6 +964,8 @@ async function startServer() {
       departmentSharing: false,
       wholeSchoolSharing: true,
       fileUrl: `/api/schools/${schoolId}/marks-import/${importId}/file`,
+      storageObjectPath: manifest.objectPath || undefined,
+      mimeType: manifest.mimeType || 'application/octet-stream',
       sourceType: 'marks-import',
       linkedTeachingAssignmentId: assignmentId,
       linkedStudentIds: validRows.map(row => row.studentId),
@@ -839,13 +985,17 @@ async function startServer() {
     res.status(201).json({ marks, resource });
   });
 
-  app.get('/api/schools/:schoolId/marks-import/:importId/file', (req, res) => {
+  app.get('/api/schools/:schoolId/marks-import/:importId/file', async (req, res) => {
     const actorUserId = getActor(req).id;
     const manifestPath = path.join(marksImportRoot, req.params.schoolId, `${req.params.importId}.json`);
     if (!fs.existsSync(manifestPath)) return res.status(404).json({ error: 'File not found.' });
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     if (!canManageAssignment(actorUserId, req.params.schoolId, manifest.assignmentId)) {
       return res.status(403).json({ error: 'You cannot access this evidence file.' });
+    }
+    if (manifest.objectPath) {
+      const remote = await downloadSchoolFile(manifest.objectPath);
+      if (remote) return res.type(remote.contentType).attachment(manifest.fileName).send(remote.data);
     }
     res.download(path.join(marksImportRoot, req.params.schoolId, manifest.storedName), manifest.fileName);
   });
@@ -939,7 +1089,7 @@ async function startServer() {
       return res.status(403).json({ error: 'Teachers can only create their own assessment workspaces.' });
     }
     const validAssignment = db.getTeachingAssignments(req.params.schoolId, teacherUserId).some(assignment =>
-      assignment.phaseId === phaseId && assignment.gradeId === gradeId && assignment.subjectId === subjectId
+      assignment.phaseId === phaseId && assignment.gradeId === gradeId && (assignment.subjectId === subjectId || assignment.subjectId === 'ALL')
     );
     if (!validAssignment) {
       return res.status(400).json({ error: 'This teacher is not assigned to the selected grade and subject.' });
@@ -954,6 +1104,41 @@ async function startServer() {
       teacherUserId,
     });
     res.status(201).json(workspace);
+  });
+
+  app.post('/api/schools/:schoolId/assessment-workspaces/:workspaceId/files', async (req, res) => {
+    const actor = getActor(req);
+    const workspace = db.getAssessmentWorkspaces(req.params.schoolId).find(item => item.id === req.params.workspaceId);
+    if (!workspace) return res.status(404).json({ error: 'Assessment workspace not found.' });
+    if (!canAccessWorkspace(actor, workspace) || (actor.role === 'TEACHER' && (workspace.teacherUserId !== actor.id || workspace.status !== 'Draft'))) {
+      return res.status(403).json({ error: 'You cannot upload files to this workspace.' });
+    }
+    const { target, fileName, mimeType, dataBase64 } = req.body;
+    if (!['paper', 'memo'].includes(target)) return res.status(400).json({ error: 'File target must be paper or memo.' });
+    try {
+      const data = decodeUpload(fileName, dataBase64);
+      const objectPath = await saveUploadedFile(req.params.schoolId, 'assessments', workspace.id, String(fileName), String(mimeType || ''), data);
+      const fileInfo = {
+        fileName: path.basename(String(fileName)),
+        fileType: path.extname(String(fileName)).slice(1).toLowerCase() || 'file',
+        mimeType: String(mimeType || 'application/octet-stream'),
+        uploadDate: new Date().toISOString(),
+        objectPath,
+        fileUrl: `/api/schools/${req.params.schoolId}/assessment-workspaces/${workspace.id}/files/${target}`,
+      };
+      const updated = db.updateAssessmentWorkspace(req.params.schoolId, workspace.id, target === 'paper' ? { paperFile: fileInfo } : { memoFile: fileInfo });
+      res.status(201).json(updated);
+    } catch (error: any) {
+      res.status(error.message?.includes('15 MB') ? 413 : 400).json({ error: error.message || 'File upload failed.' });
+    }
+  });
+
+  app.get('/api/schools/:schoolId/assessment-workspaces/:workspaceId/files/:target', async (req, res) => {
+    const workspace = db.getAssessmentWorkspaces(req.params.schoolId).find(item => item.id === req.params.workspaceId);
+    if (!workspace || !canAccessWorkspace(getActor(req), workspace)) return res.status(404).json({ error: 'File not found.' });
+    const info = req.params.target === 'paper' ? workspace.paperFile : workspace.memoFile;
+    if (!info?.objectPath) return res.status(404).json({ error: 'File not found.' });
+    await sendUploadedFile(res, info.objectPath, info.fileName, info.mimeType);
   });
 
   app.patch('/api/schools/:schoolId/assessment-workspaces/:workspaceId/status', (req, res) => {
@@ -1049,14 +1234,53 @@ async function startServer() {
     res.json(db.getKnowledgeResources(req.params.schoolId));
   });
 
-  app.post('/api/schools/:schoolId/knowledge-resources', (req, res) => {
+  app.post('/api/schools/:schoolId/knowledge-resources', async (req, res) => {
     try {
-      const { actorUser: _ignoredActorUser, ...payload } = req.body;
+      const { actorUser: _ignoredActorUser, dataBase64, fileName, mimeType, ...payload } = req.body;
       const actorUser = getActor(req);
-      const resource = db.createKnowledgeResource(req.params.schoolId, payload, actorUser);
+      const data = decodeUpload(fileName, dataBase64);
+      const resourceId = `resource-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const storageObjectPath = await saveUploadedFile(req.params.schoolId, 'knowledge', resourceId, String(fileName), String(mimeType || ''), data);
+      const resource = db.createKnowledgeResource(req.params.schoolId, {
+        ...payload,
+        fileType: path.extname(String(fileName)).slice(1).toUpperCase() || 'FILE',
+        fileSize: `${(data.length / 1024 / 1024).toFixed(2)} MB`,
+        uploadedByUserId: actorUser.id,
+        uploadedByName: actorUser.fullName,
+        mimeType: String(mimeType || 'application/octet-stream'),
+        storageObjectPath,
+        fileUrl: `/api/schools/${req.params.schoolId}/knowledge-resources/${resourceId}/file`,
+      }, actorUser, resourceId);
       res.status(201).json(resource);
     } catch (err: any) {
       res.status(400).json({ error: err.message || 'Failed to create knowledge resource' });
+    }
+  });
+
+  app.get('/api/schools/:schoolId/knowledge-resources/:resourceId/file', async (req, res) => {
+    const resource = db.getKnowledgeResources(req.params.schoolId).find(item => item.id === req.params.resourceId);
+    if (!resource?.storageObjectPath) return res.status(404).json({ error: 'File not found.' });
+    await sendUploadedFile(res, resource.storageObjectPath, resource.title, resource.mimeType);
+  });
+
+  app.get('/api/platform/school-admins', requireRoles('SUPER_ADMIN'), (_req, res) => {
+    const schools = new Map(db.getSchools().map(school => [school.id, school.name]));
+    res.json(db.getUsers(null).filter(user => user.role === 'SCHOOL_ADMIN').map(user => ({ ...user, schoolName: schools.get(user.schoolId || '') || 'Unknown school' })));
+  });
+
+  app.put('/api/platform/school-admins/:userId', requireRoles('SUPER_ADMIN'), async (req, res) => {
+    const target = db.getUsers(null).find(user => user.id === req.params.userId && user.role === 'SCHOOL_ADMIN');
+    if (!target) return res.status(404).json({ error: 'School administrator not found.' });
+    const { fullName, email, password, status } = req.body;
+    if (password && String(password).length < 12) return res.status(400).json({ error: 'Passwords must contain at least 12 characters.' });
+    try {
+      const updated = db.updateUserCredentials(target.id, target.schoolId, { fullName: fullName ?? target.fullName, email: email ?? target.email, status: status ?? target.status }, password);
+      if (!updated) return res.status(404).json({ error: 'School administrator not found.' });
+      if (password || status === 'Disabled') await revokeUserSessions(updated);
+      db.addAuditLog(target.schoolId, getActor(req), 'SCHOOL_ADMIN_UPDATED', `${target.fullName}'s school administrator credentials were updated.`);
+      res.json({ ...updated, schoolName: db.getSchoolById(updated.schoolId || '')?.name || 'Unknown school' });
+    } catch (error: any) {
+      res.status(409).json({ error: error.message || 'Could not update school administrator.' });
     }
   });
 

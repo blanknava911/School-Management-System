@@ -16,7 +16,6 @@ import {
   CheckCircle2,
   FileText,
   FileCode,
-  BarChart3,
   GraduationCap,
 } from 'lucide-react';
 
@@ -38,7 +37,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
   const canAccessKnowledge = canAccessModule(currentUser, 'knowledge_hub');
   const canAccessAcademic = canAccessModule(currentUser, 'departments');
   const canAccessTemplates = canAccessModule(currentUser, 'templates');
-  const canAccessReports = canAccessModule(currentUser, 'reports');
+  const canAccessRoles = canAccessModule(currentUser, 'roles_permissions');
   const canAccessProfile = canAccessModule(currentUser, 'school_profile');
   const canAccessBranding = canEditSchoolBranding(currentUser);
   const canAccessSettings = canAccessModule(currentUser, 'school_settings');
@@ -139,6 +138,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
               <History className="w-4 h-4" />
               <span>Platform Audit Logs</span>
             </button>
+            <button onClick={() => setActiveTab('superadmin-users')} className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md text-xs font-medium ${activeTab === 'superadmin-users' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}><Users className="h-4 w-4" /><span>School Administrators</span></button>
           </>
         ) : (
           /* School Context Navigation */
@@ -214,21 +214,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
               <span>Assessment Archive</span>
             </button>
 
-            {canAccessReports && (
-              <button
-                onClick={() => setActiveTab('reports')}
-                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                  activeTab === 'reports'
-                    ? 'bg-blue-600 text-white shadow-xs'
-                    : 'text-slate-300 hover:bg-slate-800'
-                }`}
-                style={activeTab === 'reports' ? { backgroundColor: primaryColor } : {}}
-              >
-                <BarChart3 className="w-4 h-4" />
-                <span>Reports & Analytics</span>
-              </button>
-            )}
-
             <div className="pt-4 pb-2 px-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest italic">
               School Administration
             </div>
@@ -278,7 +263,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
               </button>
             )}
 
-            <button
+            {canAccessRoles && <button
               onClick={() => setActiveTab('roles')}
               className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                 activeTab === 'roles'
@@ -289,7 +274,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
             >
               <ShieldAlert className="w-4 h-4" />
               <span>Roles & Permissions</span>
-            </button>
+            </button>}
 
             {canAccessSettings && (
               <button

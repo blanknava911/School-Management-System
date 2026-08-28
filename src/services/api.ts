@@ -17,7 +17,10 @@ import {
   StudentRecord,
   StudentMark,
   MarkImportReviewRow,
+  PlatformSchoolAdmin,
 } from '../types.js';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { auth as firebaseAuth } from '../firebase/config';
 
 export const API_BASE = '/api';
 
@@ -43,9 +46,31 @@ export class ApiService {
     setSessionToken(null);
   }
 
+  static async downloadFile(url: string, suggestedName: string): Promise<void> {
+    const res = await apiFetch(url);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not download this file.');
+    const objectUrl = URL.createObjectURL(await res.blob());
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = suggestedName;
+    anchor.click();
+    URL.revokeObjectURL(objectUrl);
+  }
+
   // Login
   static async login(email: string, password: string): Promise<{ user: User; school: School | null; token: string }> {
     setSessionToken(null);
+    if ((import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_USE_FIREBASE_AUTH === 'true') {
+      const credential = await signInWithEmailAndPassword(firebaseAuth, email, password);
+      const idToken = await credential.user.getIdToken();
+      const firebaseResponse = await fetch(`${API_BASE}/auth/firebase-session`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken }),
+      });
+      if (!firebaseResponse.ok) throw new Error((await firebaseResponse.json().catch(() => ({}))).error || 'Firebase login failed.');
+      const data = await firebaseResponse.json();
+      setSessionToken(data.token);
+      return data;
+    }
     console.log('[ApiService.login] Sending login payload to /api/auth/login:', { email });
     const res = await apiFetch(`${API_BASE}/auth/login`, {
       method: 'POST',
@@ -152,6 +177,36 @@ export class ApiService {
       const errorData = await res.json().catch(() => ({}));
       throw new Error(errorData.error || 'Failed to update user status');
     }
+    return res.json();
+  }
+
+  static async updateUser(schoolId: string, userId: string, updates: Partial<User> & { password?: string }): Promise<User> {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/users/${userId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update user');
+    return res.json();
+  }
+
+  static async replaceHod(schoolId: string, outgoingHodUserId: string, replacementHodUserId: string): Promise<{ teachersTransferred: number }> {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/hod-replacement`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outgoingHodUserId, replacementHodUserId }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to replace Departmental Head');
+    return res.json();
+  }
+
+  static async getPlatformSchoolAdmins(): Promise<PlatformSchoolAdmin[]> {
+    const res = await apiFetch(`${API_BASE}/platform/school-admins`);
+    if (!res.ok) throw new Error('Failed to load school administrators');
+    return res.json();
+  }
+
+  static async updatePlatformSchoolAdmin(userId: string, updates: Partial<User> & { password?: string }): Promise<PlatformSchoolAdmin> {
+    const res = await apiFetch(`${API_BASE}/platform/school-admins/${userId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to update school administrator');
     return res.json();
   }
 
@@ -546,6 +601,15 @@ export class ApiService {
     return res.json();
   }
 
+  static async uploadAssessmentFile(schoolId: string, workspaceId: string, target: 'paper' | 'memo', file: File): Promise<AssessmentWorkspace> {
+    const dataBase64 = await this.fileToBase64(file);
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/assessment-workspaces/${workspaceId}/files`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target, fileName: file.name, mimeType: file.type, dataBase64 }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to upload assessment file');
+    return res.json();
+  }
+
   static async deleteAssessmentWorkspace(
     schoolId: string,
     workspaceId: string,
@@ -616,13 +680,23 @@ export class ApiService {
     return res.json();
   }
 
-  static async createKnowledgeResource(schoolId: string, payload: Partial<KnowledgeResource>, actorUser?: User): Promise<KnowledgeResource> {
+  private static fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+      reader.onerror = () => reject(new Error('Could not read the selected file.'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  static async createKnowledgeResource(schoolId: string, payload: Partial<KnowledgeResource> & { file: File }, actorUser?: User): Promise<KnowledgeResource> {
+    const { file, ...metadata } = payload;
     const res = await apiFetch(`${API_BASE}/schools/${schoolId}/knowledge-resources`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...payload, actorUser }),
+      body: JSON.stringify({ ...metadata, actorUser, fileName: file.name, mimeType: file.type, dataBase64: await this.fileToBase64(file) }),
     });
-    if (!res.ok) throw new Error('Failed to create knowledge resource');
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed to create knowledge resource');
     return res.json();
   }
 
@@ -647,4 +721,3 @@ export class ApiService {
     return res.json();
   }
 }
-

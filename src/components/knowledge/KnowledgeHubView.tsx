@@ -45,6 +45,9 @@ export const KnowledgeHubView: React.FC = () => {
   const [newTags, setNewTags] = useState<string>('CAPS, Grade 4, Term 1');
   const [deptSharing, setDeptSharing] = useState<boolean>(true);
   const [schoolSharing, setSchoolSharing] = useState<boolean>(true);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadError, setUploadError] = useState<string>('');
+  const [uploading, setUploading] = useState(false);
 
   const userRoles = getUserRoles(currentUser);
   const isPrincipalOrAdmin = userRoles.some(
@@ -71,7 +74,14 @@ export const KnowledgeHubView: React.FC = () => {
 
   const handleUploadResource = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTitle || !activeSchool) return;
+    if (!newTitle || !activeSchool || !selectedFile) {
+      setUploadError('Choose the PDF, Office document, spreadsheet, or image you want to upload.');
+      return;
+    }
+    if (selectedFile.size > 15 * 1024 * 1024) {
+      setUploadError('Files must be 15 MB or smaller.');
+      return;
+    }
 
     const tagsArray = newTags.split(',').map(t => t.trim()).filter(Boolean);
     const payload = {
@@ -81,8 +91,7 @@ export const KnowledgeHubView: React.FC = () => {
       resourceType: newType,
       folder: newFolder,
       tags: tagsArray.length > 0 ? tagsArray : ['Resource'],
-      fileType: 'pdf' as const,
-      fileSize: '1.5 MB',
+      file: selectedFile,
       uploadedByUserId: currentUser?.id || 'usr-me',
       uploadedByName: currentUser?.fullName || 'Teacher',
       departmentSharing: deptSharing,
@@ -90,15 +99,20 @@ export const KnowledgeHubView: React.FC = () => {
     };
 
     try {
+      setUploading(true);
+      setUploadError('');
       const created = await ApiService.createKnowledgeResource(activeSchool.id, payload, currentUser || undefined);
       setResources(prev => [created, ...prev]);
       setIsUploadModalOpen(false);
       setSuccessMsg(`Resource "${newTitle}" uploaded successfully to Knowledge Hub!`);
       setNewTitle('');
       setNewDescription('');
+      setSelectedFile(null);
       setTimeout(() => setSuccessMsg(null), 3500);
-    } catch (err) {
-      console.error('Failed to save knowledge resource:', err);
+    } catch (err: any) {
+      setUploadError(err.message || 'The resource could not be uploaded.');
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -334,6 +348,12 @@ export const KnowledgeHubView: React.FC = () => {
             </div>
 
             <form onSubmit={handleUploadResource} className="space-y-4 text-xs">
+              {uploadError && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 font-semibold text-rose-700">{uploadError}</div>}
+              <label className="block rounded-xl border-2 border-dashed border-indigo-200 bg-indigo-50/50 p-4 text-center font-bold text-indigo-800 cursor-pointer">
+                <Upload className="mx-auto mb-2 h-5 w-5" />
+                {selectedFile ? `${selectedFile.name} · ${(selectedFile.size / 1024 / 1024).toFixed(2)} MB` : 'Choose a document, spreadsheet, PDF, or image *'}
+                <input type="file" required className="sr-only" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.webp,.ppt,.pptx" onChange={event => setSelectedFile(event.target.files?.[0] || null)} />
+              </label>
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Resource Title *</label>
                 <input
@@ -406,9 +426,10 @@ export const KnowledgeHubView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-xs"
+                  disabled={uploading}
+                  className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-xs disabled:opacity-50"
                 >
-                  Upload Resource
+                  {uploading ? 'Uploading…' : 'Upload Resource'}
                 </button>
               </div>
             </form>
@@ -474,13 +495,13 @@ export const KnowledgeHubView: React.FC = () => {
 
             <div className="flex justify-end gap-2 pt-2">
               {previewResource.fileUrl && (
-                <a
-                  href={`${previewResource.fileUrl}?actorUserId=${encodeURIComponent(currentUser?.id || '')}`}
+                <button
+                  onClick={() => ApiService.downloadFile(previewResource.fileUrl!, previewResource.title).catch(err => setUploadError(err.message))}
                   className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white"
                 >
                   <Download className="h-4 w-4" />
                   Download evidence
-                </a>
+                </button>
               )}
               <button
                 onClick={() => setPreviewResource(null)}

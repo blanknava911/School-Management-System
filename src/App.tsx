@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Header } from './components/common/Header';
 import { Sidebar } from './components/common/Sidebar';
@@ -19,8 +19,9 @@ import { AssessmentWorkspaceView } from './components/assessments/AssessmentWork
 import { KnowledgeHubView } from './components/knowledge/KnowledgeHubView';
 import { TemplatesView } from './components/templates/TemplatesView';
 import { AssessmentArchiveView } from './components/archive/AssessmentArchiveView';
-import { ReportsView } from './components/reports/ReportsView';
 import { StudentsAndMarksView } from './components/students/StudentsAndMarksView';
+import { PlatformSchoolAdminManagement } from './components/superadmin/PlatformSchoolAdminManagement';
+import { EssentialsTutorial } from './components/tutorial/EssentialsTutorial';
 
 function MainLayout() {
   const { currentUser, activeSchool, superAdminInspectingSchool, refreshSchoolData } = useAuth();
@@ -31,6 +32,11 @@ function MainLayout() {
   const [isRegisterWizardOpen, setIsRegisterWizardOpen] = useState<boolean>(false);
   const [isLoginOpen, setIsLoginOpen] = useState<boolean>(false);
   const [showManualSetupWizard, setShowManualSetupWizard] = useState<boolean>(false);
+  const [showTutorial, setShowTutorial] = useState(false);
+  useEffect(() => {
+    if (!currentUser) return setShowTutorial(false);
+    setShowTutorial(!localStorage.getItem(`samp-tutorial-${currentUser.id}`));
+  }, [currentUser]);
 
   // If user is not logged in, render the Landing Page
   if (!currentUser) {
@@ -74,6 +80,7 @@ function MainLayout() {
       if (activeTab === 'superadmin-audit') {
         return <AuditTrailView isPlatformMode={true} />;
       }
+      if (activeTab === 'superadmin-users') return <PlatformSchoolAdminManagement />;
       return (
         <SuperAdminDashboard
           onOpenCreateSchool={() => setIsRegisterWizardOpen(true)}
@@ -99,8 +106,6 @@ function MainLayout() {
       case 'archive':
       case 'templates':
         return <AssessmentArchiveView onNavigateToWorkspace={() => setActiveTab('assessments')} />;
-      case 'reports':
-        return <ReportsView />;
       case 'profile':
         return <SchoolProfileView />;
       case 'branding':
@@ -117,7 +122,7 @@ function MainLayout() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans selection:bg-blue-600 selection:text-white" style={{ '--school-primary': activeSchool?.primaryColor || '#1e3a8a', '--school-secondary': activeSchool?.secondaryColor || '#0d9488' } as React.CSSProperties}>
       <Header activeTab={activeTab} setActiveTab={setActiveTab} />
 
       <div className="flex-1 flex w-full">
@@ -145,6 +150,7 @@ function MainLayout() {
           setActiveTab('dashboard');
         }}
       />
+      {showTutorial && <EssentialsTutorial onDone={() => { localStorage.setItem(`samp-tutorial-${currentUser.id}`, new Date().toISOString()); setShowTutorial(false); }} />}
     </div>
   );
 }

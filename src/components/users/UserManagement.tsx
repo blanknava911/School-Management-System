@@ -14,6 +14,7 @@ import {
   XCircle,
   X,
   Lock,
+  Pencil,
   Plus,
   AlertCircle,
   ShieldAlert,
@@ -43,6 +44,10 @@ export const UserManagement: React.FC = () => {
   const [selectedRoles, setSelectedRoles] = useState<Role[]>(['TEACHER']);
   const [password, setPassword] = useState<string>('');
   const [modalError, setModalError] = useState<string | null>(null);
+  const [selectedHodId, setSelectedHodId] = useState<string>('');
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [editPassword, setEditPassword] = useState('');
+  const [replacementHodId, setReplacementHodId] = useState('');
 
   // Grade, Class & Academic Assignment States
   const [availableGrades, setAvailableGrades] = useState<any[]>([]);
@@ -170,6 +175,10 @@ export const UserManagement: React.FC = () => {
       setModalError('Selecting at least one Class Section is mandatory for Teacher accounts.');
       return;
     }
+    if (isTeacher && !selectedHodId) {
+      setModalError('Select the Departmental Head responsible for this teacher.');
+      return;
+    }
 
     try {
       const newUser = await ApiService.createUser(
@@ -180,6 +189,7 @@ export const UserManagement: React.FC = () => {
           role: inheritedPrimaryRole,
           roles: selectedRoles,
           password,
+          hodUserId: isTeacher ? selectedHodId : undefined,
         },
         currentUser
       );
@@ -226,9 +236,43 @@ export const UserManagement: React.FC = () => {
       setPrimaryRole('TEACHER');
       setSelectedGradeIds([]);
       setSelectedClassIds([]);
+      setSelectedHodId('');
       loadUsers();
     } catch (err: any) {
       setModalError(err.message || 'Failed to create user');
+    }
+  };
+
+  const hodUsers = users.filter(user => getUserRoles(user).includes('HOD') && user.status === 'Active');
+
+  const saveEditedUser = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!activeSchool || !editingUser) return;
+    const roles = getUserRoles(editingUser);
+    if (roles.includes('TEACHER') && !editingUser.hodUserId) {
+      setModalError('Select the Departmental Head responsible for this teacher.');
+      return;
+    }
+    try {
+      const updated = await ApiService.updateUser(activeSchool.id, editingUser.id, { ...editingUser, roles, password: editPassword || undefined });
+      setUsers(current => current.map(user => user.id === updated.id ? updated : user));
+      setEditingUser(null);
+      setEditPassword('');
+      setModalError(null);
+    } catch (error: any) {
+      setModalError(error.message || 'Could not update staff account.');
+    }
+  };
+
+  const transferHodWork = async (outgoing: User) => {
+    if (!activeSchool || !replacementHodId) return;
+    try {
+      const result = await ApiService.replaceHod(activeSchool.id, outgoing.id, replacementHodId);
+      setActionNotice({ title: 'Departmental Head replaced', message: `${result.teachersTransferred} teacher assignment(s), department links, and moderation responsibilities were transferred.`, type: 'info' });
+      setReplacementHodId('');
+      await loadUsers();
+    } catch (error: any) {
+      setActionNotice({ title: 'Replacement failed', message: error.message, type: 'warning' });
     }
   };
 
@@ -379,6 +423,9 @@ export const UserManagement: React.FC = () => {
                         {new Date(u.createdAt).toLocaleDateString()}
                       </td>
                       <td className="px-6 py-4 text-right space-x-2">
+                        <button onClick={() => { setEditingUser({ ...u }); setEditPassword(''); setModalError(null); }} className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-[11px] font-bold rounded-lg">
+                          Edit
+                        </button>
                         {u.status === 'Active' ? (
                           <button
                             onClick={() => handleDisableUser(u)}
@@ -510,7 +557,13 @@ export const UserManagement: React.FC = () => {
 
               {/* Mandatory Class Assignment for Teacher Accounts */}
               {(selectedRoles.includes('TEACHER') || getHighestRole(selectedRoles) === 'TEACHER') && (
-                <div className="p-3.5 bg-amber-50/90 border border-amber-300 rounded-xl space-y-2">
+                <div className="p-3.5 bg-amber-50/90 border border-amber-300 rounded-xl space-y-3">
+                  <label className="block font-bold text-amber-950">Responsible Departmental Head *
+                    <select required value={selectedHodId} onChange={event => setSelectedHodId(event.target.value)} className="mt-1 w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-slate-900">
+                      <option value="">Select Departmental Head</option>
+                      {hodUsers.map(hod => <option key={hod.id} value={hod.id}>{hod.fullName}</option>)}
+                    </select>
+                  </label>
                   <div className="flex items-center justify-between">
                     <label className="block font-bold text-amber-950 text-xs flex items-center space-x-1.5">
                       <Shield className="w-3.5 h-3.5 text-amber-700 shrink-0" />
@@ -663,6 +716,21 @@ export const UserManagement: React.FC = () => {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {editingUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
+          <form onSubmit={saveEditedUser} className="w-full max-w-lg space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-center justify-between"><div><h3 className="text-lg font-black text-slate-900">Edit staff account</h3><p className="text-xs text-slate-500">Correct names, email addresses, reporting lines, or credentials.</p></div><button type="button" onClick={() => setEditingUser(null)}><X className="h-5 w-5" /></button></div>
+            {modalError && <div className="rounded-lg bg-rose-50 p-3 text-xs font-bold text-rose-700">{modalError}</div>}
+            <label className="block text-xs font-bold text-slate-700">Full name<input required value={editingUser.fullName} onChange={e => setEditingUser({ ...editingUser, fullName: e.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></label>
+            <label className="block text-xs font-bold text-slate-700">Email address<input required type="email" value={editingUser.email} onChange={e => setEditingUser({ ...editingUser, email: e.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /></label>
+            {getUserRoles(editingUser).includes('TEACHER') && <label className="block text-xs font-bold text-slate-700">Responsible Departmental Head<select required value={editingUser.hodUserId || ''} onChange={e => setEditingUser({ ...editingUser, hodUserId: e.target.value })} className="mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm"><option value="">Select Departmental Head</option>{hodUsers.map(hod => <option key={hod.id} value={hod.id}>{hod.fullName}</option>)}</select></label>}
+            <label className="block text-xs font-bold text-slate-700">New password (optional)<input type="password" minLength={12} value={editPassword} onChange={e => setEditPassword(e.target.value)} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm" /><span className="mt-1 block font-normal text-slate-500">Leave blank to keep the current password.</span></label>
+            {getUserRoles(editingUser).includes('HOD') && hodUsers.length > 1 && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="mb-2 text-xs font-bold text-amber-900">Replace this Departmental Head and transfer all linked teachers</p><div className="flex gap-2"><select value={replacementHodId} onChange={e => setReplacementHodId(e.target.value)} className="min-w-0 flex-1 rounded-lg border bg-white px-3 py-2 text-xs"><option value="">Choose replacement</option>{hodUsers.filter(hod => hod.id !== editingUser.id).map(hod => <option key={hod.id} value={hod.id}>{hod.fullName}</option>)}</select><button type="button" disabled={!replacementHodId} onClick={() => transferHodWork(editingUser)} className="rounded-lg bg-amber-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Transfer</button></div></div>}
+            <div className="flex justify-end gap-2 pt-2"><button type="button" onClick={() => setEditingUser(null)} className="rounded-lg border px-4 py-2 text-xs font-bold">Cancel</button><button className="rounded-lg bg-indigo-600 px-5 py-2 text-xs font-bold text-white">Save changes</button></div>
+          </form>
         </div>
       )}
 

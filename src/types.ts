@@ -50,6 +50,10 @@ export interface User {
   roles?: Role[]; // Multi-role support (e.g. ['PRINCIPAL', 'TEACHER'])
   departmentIds?: string[];
   gradeIds?: string[];
+  hodUserId?: string;
+  createdByUserId?: string;
+  tutorialCompletedAt?: string;
+  firebaseUid?: string;
   status: 'Active' | 'Pending Setup' | 'Inactive' | 'Disabled';
   createdAt: string;
   lastLogin?: string;
@@ -165,6 +169,16 @@ export interface MarkImportReviewRow {
   status: 'matched' | 'manual-review' | 'not-found';
 }
 
+export interface UnmatchedMarkImportRow {
+  admissionNumber?: string;
+  name?: string;
+  score?: number | null;
+}
+
+export interface PlatformSchoolAdmin extends User {
+  schoolName: string;
+}
+
 export interface HodPhaseAssignment {
   id: string;
   schoolId: string;
@@ -258,8 +272,8 @@ export interface AssessmentWorkspace {
   archiveDate?: string;
   createdAt: string;
   updatedAt: string;
-  paperFile?: { fileName: string; fileType: 'pdf' | 'docx'; uploadDate: string; fileUrl?: string };
-  memoFile?: { fileName: string; fileType: 'pdf' | 'docx'; uploadDate: string; fileUrl?: string };
+  paperFile?: { fileName: string; fileType: string; mimeType?: string; uploadDate: string; fileUrl?: string; objectPath?: string };
+  memoFile?: { fileName: string; fileType: string; mimeType?: string; uploadDate: string; fileUrl?: string; objectPath?: string };
   moderationNotes?: ModerationNote[];
   approvalHistory?: AssessmentApprovalHistory[];
   versionHistory?: AssessmentVersion[];
@@ -293,6 +307,8 @@ export interface KnowledgeResource {
   departmentId?: string;
   wholeSchoolSharing: boolean;
   fileUrl?: string;
+  storageObjectPath?: string;
+  mimeType?: string;
   sourceType?: 'manual-upload' | 'marks-import';
   linkedTeachingAssignmentId?: string;
   linkedStudentIds?: string[];
