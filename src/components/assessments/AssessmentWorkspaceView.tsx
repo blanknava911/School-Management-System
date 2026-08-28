@@ -55,8 +55,8 @@ export const AssessmentWorkspaceView: React.FC = () => {
   const [phaseId, setPhaseId] = useState<string>('');
   const [gradeId, setGradeId] = useState<string>('');
   const [subjectId, setSubjectId] = useState<string>('');
-  const [questionPaperFile, setQuestionPaperFile] = useState<{ fileName: string; fileType: 'pdf' | 'docx' } | null>(null);
-  const [memoFile, setMemoFile] = useState<{ fileName: string; fileType: 'pdf' | 'docx' } | null>(null);
+  const [questionPaperFile, setQuestionPaperFile] = useState<File | null>(null);
+  const [memoFile, setMemoFile] = useState<File | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
 
   // Review Comment & Upload States
@@ -127,13 +127,10 @@ export const AssessmentWorkspaceView: React.FC = () => {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, target: 'paper' | 'memo') => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const extension = file.name.split('.').pop()?.toLowerCase();
-    const fileType: 'pdf' | 'docx' = extension === 'pdf' ? 'pdf' : 'docx';
-
     if (target === 'paper') {
-      setQuestionPaperFile({ fileName: file.name, fileType });
+      setQuestionPaperFile(file);
     } else {
-      setMemoFile({ fileName: file.name, fileType });
+      setMemoFile(file);
     }
   };
 
@@ -160,15 +157,14 @@ export const AssessmentWorkspaceView: React.FC = () => {
         teacherUserId: currentUser.id,
       });
 
-      // Update file links & status if submitted
-      if (questionPaperFile || memoFile || initialStatus !== 'Draft') {
+      if (questionPaperFile) await ApiService.uploadAssessmentFile(activeSchool.id, created.id, 'paper', questionPaperFile);
+      if (memoFile) await ApiService.uploadAssessmentFile(activeSchool.id, created.id, 'memo', memoFile);
+      if (assessmentType) {
         await ApiService.updateAssessmentWorkspace(activeSchool.id, created.id, {
           assessmentType,
-          status: initialStatus,
-          paperFile: questionPaperFile ? { ...questionPaperFile, uploadDate: new Date().toISOString() } : undefined,
-          memoFile: memoFile ? { ...memoFile, uploadDate: new Date().toISOString() } : undefined,
         });
       }
+      if (initialStatus === 'Submitted') await ApiService.updateAssessmentWorkspaceStatus(activeSchool.id, created.id, 'Submitted');
 
       setIsCreateOpen(false);
       setTitle('');
@@ -540,39 +536,39 @@ export const AssessmentWorkspaceView: React.FC = () => {
               {/* File Upload Fields */}
               <div className="pt-2 border-t border-slate-200 space-y-3">
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">Question Paper (DOCX, PDF)</label>
+                  <label className="block font-bold text-slate-700 mb-1">Question Paper (document, PDF, or image)</label>
                   <div className="flex items-center space-x-2">
                     <label className="cursor-pointer px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl font-bold flex items-center space-x-1.5 text-xs">
                       <Upload className="w-3.5 h-3.5" />
                       <span>Choose File</span>
                       <input
                         type="file"
-                        accept=".docx,.pdf,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        accept=".docx,.pdf,.doc,.png,.jpg,.jpeg,.webp,application/pdf,image/*"
                         className="hidden"
                         onChange={e => handleFileUpload(e, 'paper')}
                       />
                     </label>
                     <span className="text-xs text-slate-600 truncate">
-                      {questionPaperFile ? questionPaperFile.fileName : 'No file chosen'}
+                      {questionPaperFile ? questionPaperFile.name : 'No file chosen'}
                     </span>
                   </div>
                 </div>
 
                 <div>
-                  <label className="block font-bold text-slate-700 mb-1">Memorandum (DOCX, PDF)</label>
+                  <label className="block font-bold text-slate-700 mb-1">Memorandum (document, PDF, or image)</label>
                   <div className="flex items-center space-x-2">
                     <label className="cursor-pointer px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl font-bold flex items-center space-x-1.5 text-xs">
                       <Upload className="w-3.5 h-3.5" />
                       <span>Choose File</span>
                       <input
                         type="file"
-                        accept=".docx,.pdf,.doc,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        accept=".docx,.pdf,.doc,.png,.jpg,.jpeg,.webp,application/pdf,image/*"
                         className="hidden"
                         onChange={e => handleFileUpload(e, 'memo')}
                       />
                     </label>
                     <span className="text-xs text-slate-600 truncate">
-                      {memoFile ? memoFile.fileName : 'No file chosen'}
+                      {memoFile ? memoFile.name : 'No file chosen'}
                     </span>
                   </div>
                 </div>
@@ -677,9 +673,7 @@ export const AssessmentWorkspaceView: React.FC = () => {
                     <span className="text-slate-400 text-[10px]">Pending</span>
                   )}
                 </div>
-                <div className="text-xs font-medium text-slate-700 truncate">
-                  {selectedWorkspace.paperFile?.fileName || 'No question paper attached'}
-                </div>
+                {selectedWorkspace.paperFile?.fileUrl ? <button onClick={() => ApiService.downloadFile(selectedWorkspace.paperFile!.fileUrl!, selectedWorkspace.paperFile!.fileName)} className="text-left text-xs font-bold text-indigo-700 hover:underline">Download {selectedWorkspace.paperFile.fileName}</button> : <div className="text-xs font-medium text-slate-700">No question paper attached</div>}
               </div>
 
               <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
@@ -694,9 +688,7 @@ export const AssessmentWorkspaceView: React.FC = () => {
                     <span className="text-slate-400 text-[10px]">Pending</span>
                   )}
                 </div>
-                <div className="text-xs font-medium text-slate-700 truncate">
-                  {selectedWorkspace.memoFile?.fileName || 'No memorandum attached'}
-                </div>
+                {selectedWorkspace.memoFile?.fileUrl ? <button onClick={() => ApiService.downloadFile(selectedWorkspace.memoFile!.fileUrl!, selectedWorkspace.memoFile!.fileName)} className="text-left text-xs font-bold text-indigo-700 hover:underline">Download {selectedWorkspace.memoFile.fileName}</button> : <div className="text-xs font-medium text-slate-700">No memorandum attached</div>}
               </div>
             </div>
 
