@@ -77,16 +77,17 @@ export const AssessmentWorkspaceView: React.FC = () => {
     if (!activeSchool) return;
     setLoading(true);
     try {
-      const [wsData, structData, assignData] = await Promise.all([
+      const [wsData, structData, teachingAssignData, academicAssignData] = await Promise.all([
         ApiService.getAssessmentWorkspaces(activeSchool.id, {}),
         ApiService.getAcademicStructure(activeSchool.id),
+        ApiService.getTeachingAssignments(activeSchool.id, currentUser && !isPrincipalOrAdmin ? currentUser.id : undefined),
         ApiService.getAcademicAssignments(activeSchool.id, currentUser ? { userId: currentUser.id } : undefined),
       ]);
       setWorkspaces(wsData);
       setPhases(structData.phases);
       setGrades(structData.grades);
       setSubjects(structData.subjects);
-      setTeacherAssignments(assignData);
+      setTeacherAssignments(teachingAssignData.length > 0 ? teachingAssignData : academicAssignData);
 
       if (structData.phases.length > 0) setPhaseId(structData.phases[0].id);
       if (structData.grades.length > 0) setGradeId(structData.grades[0].id);
@@ -100,7 +101,7 @@ export const AssessmentWorkspaceView: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, [activeSchool, currentUser]);
+  }, [activeSchool, currentUser, isPrincipalOrAdmin]);
 
   // Compute available grades for current user
   const availableGrades = React.useMemo(() => {
@@ -124,6 +125,22 @@ export const AssessmentWorkspaceView: React.FC = () => {
     return filtered.length > 0 ? filtered : subjects;
   }, [subjects, teacherAssignments, gradeId, currentUser, isPrincipalOrAdmin]);
 
+  useEffect(() => {
+    if (availableGrades.length === 0) return;
+    if (!gradeId || !availableGrades.some(g => g.id === gradeId)) {
+      const nextGrade = availableGrades[0];
+      setGradeId(nextGrade.id);
+      setPhaseId(nextGrade.phaseId);
+    }
+  }, [availableGrades, gradeId]);
+
+  useEffect(() => {
+    if (availableSubjects.length === 0) return;
+    if (!subjectId || !availableSubjects.some(s => s.id === subjectId)) {
+      setSubjectId(availableSubjects[0].id);
+    }
+  }, [availableSubjects, subjectId]);
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, target: 'paper' | 'memo') => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -141,6 +158,11 @@ export const AssessmentWorkspaceView: React.FC = () => {
 
     if (!title.trim()) {
       setModalError('Assessment Title is required.');
+      return;
+    }
+
+    if (!gradeId || !subjectId) {
+      setModalError('Choose a grade and subject before creating the assessment.');
       return;
     }
 

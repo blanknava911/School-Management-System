@@ -41,6 +41,13 @@ async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   return fetch(input, { ...init, headers });
 }
 
+async function getErrorMessage(res: Response, fallback: string): Promise<string> {
+  const errorData = await res.json().catch(() => ({}));
+  return typeof errorData.error === 'string' && errorData.error.trim()
+    ? errorData.error
+    : fallback;
+}
+
 export class ApiService {
   static clearSession() {
     setSessionToken(null);
@@ -504,7 +511,7 @@ export class ApiService {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) throw new Error('Failed to create academic assignment');
+    if (!res.ok) throw new Error(await getErrorMessage(res, 'Failed to create academic assignment'));
     return res.json();
   }
 
@@ -567,7 +574,7 @@ export class ApiService {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) throw new Error('Failed to create assessment workspace');
+    if (!res.ok) throw new Error(await getErrorMessage(res, 'Failed to create assessment workspace'));
     return res.json();
   }
 
@@ -583,7 +590,7 @@ export class ApiService {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status, hodUserId, actorUser }),
     });
-    if (!res.ok) throw new Error('Failed to update assessment workspace status');
+    if (!res.ok) throw new Error(await getErrorMessage(res, 'Failed to update assessment workspace status'));
     return res.json();
   }
 
@@ -597,7 +604,7 @@ export class ApiService {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
     });
-    if (!res.ok) throw new Error('Failed to update assessment workspace');
+    if (!res.ok) throw new Error(await getErrorMessage(res, 'Failed to update assessment workspace'));
     return res.json();
   }
 
@@ -620,7 +627,7 @@ export class ApiService {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ actorUser }),
     });
-    if (!res.ok) throw new Error('Failed to delete assessment workspace');
+    if (!res.ok) throw new Error(await getErrorMessage(res, 'Failed to delete assessment workspace'));
     return res.json();
   }
 

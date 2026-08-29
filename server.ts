@@ -323,6 +323,7 @@ async function startServer() {
         status: 'Active',
         isFirstLogin: false, // Set to false so admin logs directly into dashboard with profile completion banner
       });
+      db.initializePrimarySchoolAcademicStructure(newSchool.id);
 
       // Create First School Administrator
       const newAdmin = db.createUser(
@@ -1085,16 +1086,28 @@ async function startServer() {
       return res.status(400).json({ error: 'Missing required assessment workspace fields' });
     }
     const actor = getActor(req);
+    const schoolId = req.params.schoolId;
+    const owner = db.getUsers(schoolId).find(user => user.id === teacherUserId && user.status === 'Active');
+    if (!owner) {
+      return res.status(400).json({ error: 'Choose an active staff member from this school for the assessment workspace.' });
+    }
     if (actor.role === 'TEACHER' && teacherUserId !== actor.id) {
       return res.status(403).json({ error: 'Teachers can only create their own assessment workspaces.' });
     }
-    const validAssignment = db.getTeachingAssignments(req.params.schoolId, teacherUserId).some(assignment =>
+    const actorRoles = actor.roles?.length ? actor.roles : [actor.role];
+    const ownerRoles = owner.roles?.length ? owner.roles : [owner.role];
+    const isLeadershipCreator = actorRoles.some(role => leadershipRoles.includes(role));
+    const validTeachingAssignment = db.getTeachingAssignments(schoolId, teacherUserId).some(assignment =>
       assignment.phaseId === phaseId && assignment.gradeId === gradeId && (assignment.subjectId === subjectId || assignment.subjectId === 'ALL')
     );
+    const validAcademicAssignment = db.getAcademicAssignments(schoolId, teacherUserId, undefined, gradeId).some(assignment =>
+      assignment.status === 'Active' && (assignment.subjectId === subjectId || assignment.subjectId === 'ALL')
+    );
+    const validAssignment = isLeadershipCreator || ownerRoles.some(role => leadershipRoles.includes(role)) || validTeachingAssignment || validAcademicAssignment;
     if (!validAssignment) {
-      return res.status(400).json({ error: 'This teacher is not assigned to the selected grade and subject.' });
+      return res.status(400).json({ error: 'This staff member is not assigned to the selected grade and subject.' });
     }
-    const workspace = db.createAssessmentWorkspace(req.params.schoolId, {
+    const workspace = db.createAssessmentWorkspace(schoolId, {
       phaseId,
       gradeId,
       subjectId,
