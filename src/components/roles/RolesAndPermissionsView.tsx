@@ -86,19 +86,6 @@ export const RolesAndPermissionsView: React.FC = () => {
       },
     },
     {
-      role: 'GRADE_HEAD',
-      label: 'Grade Head',
-      scope: 'Assigned Grade',
-      capabilities: {
-        manageUsers: false,
-        manageProfile: false,
-        manageStructure: false,
-        manageSettings: false,
-        viewAuditLogs: false,
-        switchSchool: false,
-      },
-    },
-    {
       role: 'TEACHER',
       label: 'Teacher',
       scope: 'Assigned Classes',
@@ -122,7 +109,7 @@ export const RolesAndPermissionsView: React.FC = () => {
             <span>Roles & Permission Hierarchy Matrix</span>
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            System permissions configured for 7 user role levels.
+            System permissions configured for 6 user role levels.
           </p>
         </div>
       </div>

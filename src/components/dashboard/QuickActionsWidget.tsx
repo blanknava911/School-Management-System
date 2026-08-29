@@ -39,7 +39,7 @@ export const QuickActionsWidget: React.FC<{ setActiveTab: (tab: string) => void 
       icon: <PlusCircle className="w-4 h-4 text-blue-600" />,
       tab: 'assessments',
       color: 'bg-blue-50 border-blue-200 hover:bg-blue-100/80',
-      allowedRoles: ['TEACHER', 'HOD', 'GRADE_HEAD', 'DEPUTY_PRINCIPAL', 'PRINCIPAL', 'SCHOOL_ADMIN'],
+      allowedRoles: ['TEACHER', 'HOD', 'DEPUTY_PRINCIPAL', 'PRINCIPAL', 'SCHOOL_ADMIN'],
     },
     {
       id: 'qa-2',
@@ -48,7 +48,7 @@ export const QuickActionsWidget: React.FC<{ setActiveTab: (tab: string) => void 
       icon: <Upload className="w-4 h-4 text-purple-600" />,
       tab: 'knowledge',
       color: 'bg-purple-50 border-purple-200 hover:bg-purple-100/80',
-      allowedRoles: ['TEACHER', 'HOD', 'GRADE_HEAD', 'DEPUTY_PRINCIPAL', 'PRINCIPAL', 'SCHOOL_ADMIN'],
+      allowedRoles: ['TEACHER', 'HOD', 'DEPUTY_PRINCIPAL', 'PRINCIPAL', 'SCHOOL_ADMIN'],
     },
     {
       id: 'qa-3',
@@ -57,7 +57,7 @@ export const QuickActionsWidget: React.FC<{ setActiveTab: (tab: string) => void 
       icon: <BarChart3 className="w-4 h-4 text-emerald-600" />,
       tab: 'reports',
       color: 'bg-emerald-50 border-emerald-200 hover:bg-emerald-100/80',
-      allowedRoles: ['HOD', 'GRADE_HEAD', 'DEPUTY_PRINCIPAL', 'PRINCIPAL', 'SCHOOL_ADMIN', 'SUPER_ADMIN'],
+      allowedRoles: ['HOD', 'DEPUTY_PRINCIPAL', 'PRINCIPAL', 'SCHOOL_ADMIN', 'SUPER_ADMIN'],
     },
     {
       id: 'qa-4',

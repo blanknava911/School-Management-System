@@ -25,7 +25,6 @@ const AVAILABLE_ROLES: { role: Role; label: string }[] = [
   { role: 'PRINCIPAL', label: 'Principal' },
   { role: 'DEPUTY_PRINCIPAL', label: 'Deputy Principal' },
   { role: 'HOD', label: 'DH (Departmental Head)' },
-  { role: 'GRADE_HEAD', label: 'Grade Head' },
   { role: 'TEACHER', label: 'Teacher' },
 ];
 

@@ -54,16 +54,10 @@ export const ROLE_HIERARCHY: RoleInfo[] = [
     rank: 5,
   },
   {
-    role: 'GRADE_HEAD',
-    title: 'Grade Head',
-    purpose: 'Initial assessment review, comments, and change requests for assigned grade levels.',
-    rank: 6,
-  },
-  {
     role: 'TEACHER',
     title: 'Teacher',
     purpose: 'Creates assessment workspaces, uploads question papers & memorandums, and manages resources.',
-    rank: 7,
+    rank: 6,
   },
 ];
 
@@ -89,8 +83,7 @@ export function getHighestRole(roles: Role[]): Role {
     PRINCIPAL: 3,
     DEPUTY_PRINCIPAL: 4,
     HOD: 5,
-    GRADE_HEAD: 6,
-    TEACHER: 7,
+    TEACHER: 6,
   };
   return [...roles].sort((a, b) => (roleRanks[a] || 99) - (roleRanks[b] || 99))[0];
 }
@@ -196,19 +189,19 @@ export function canManageSchoolSettings(user: User | null): boolean {
 }
 
 export function canCreateAssessmentWorkspace(user: User | null): boolean {
-  return hasRole(user, ['TEACHER', 'GRADE_HEAD', 'HOD', 'DEPUTY_PRINCIPAL', 'PRINCIPAL', 'SCHOOL_ADMIN', 'SUPER_ADMIN']);
+  return hasRole(user, ['TEACHER', 'HOD', 'DEPUTY_PRINCIPAL', 'PRINCIPAL', 'SCHOOL_ADMIN', 'SUPER_ADMIN']);
 }
 
 export function canReviewAssessment(user: User | null): boolean {
-  return hasRole(user, ['GRADE_HEAD', 'HOD', 'DEPUTY_PRINCIPAL', 'PRINCIPAL', 'SUPER_ADMIN']);
+  return hasRole(user, ['HOD', 'DEPUTY_PRINCIPAL', 'PRINCIPAL', 'SCHOOL_ADMIN', 'SUPER_ADMIN']);
 }
 
 export function canRequestRevisions(user: User | null): boolean {
-  return hasRole(user, ['GRADE_HEAD', 'HOD', 'DEPUTY_PRINCIPAL', 'PRINCIPAL', 'SUPER_ADMIN']);
+  return hasRole(user, ['HOD', 'DEPUTY_PRINCIPAL', 'PRINCIPAL', 'SCHOOL_ADMIN', 'SUPER_ADMIN']);
 }
 
 export function canApproveAssessment(user: User | null): boolean {
-  return hasRole(user, ['HOD', 'DEPUTY_PRINCIPAL', 'PRINCIPAL', 'SUPER_ADMIN']);
+  return hasRole(user, ['HOD', 'DEPUTY_PRINCIPAL', 'PRINCIPAL', 'SCHOOL_ADMIN', 'SUPER_ADMIN']);
 }
 
 export function canManageTemplates(user: User | null): boolean {

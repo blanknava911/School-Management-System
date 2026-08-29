@@ -1,5 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { ApiService } from '../../services/api';
+import { AssessmentWorkspace } from '../../types';
+import { getUserRoles } from '../../utils/rbac';
 import {
   Building2,
   Shield,
@@ -33,51 +36,109 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
   const [profileModalTab, setProfileModalTab] = useState<'profile' | 'settings' | 'password' | 'help'>('profile');
   const [isProfileMenuDropdownOpen, setIsProfileMenuDropdownOpen] = useState(false);
 
-  // Initial mock notifications
-  const [notifications, setNotifications] = useState<NotificationItem[]>([
-    {
-      id: 'notif-1',
-      schoolId: activeSchool?.id,
-      type: 'RETURNED',
-      title: 'Assessment Returned for Revision',
-      message: 'Grade 4 Mathematics Term 3 Test returned by HOD Mr. Sipho Nkosi. Formatting & Memo adjustments required.',
-      timestamp: '10m ago',
-      isUnread: true,
-      targetTab: 'assessments',
-      metadata: { subject: 'Mathematics', grade: 'Grade 4' },
-    },
-    {
-      id: 'notif-2',
-      schoolId: activeSchool?.id,
-      type: 'WORKFLOW',
-      title: 'Assessment Approved',
-      message: 'Grade 7 English FAL Literature Test signed off and approved by Principal Dr. M. Arthur.',
-      timestamp: '1h ago',
-      isUnread: true,
-      targetTab: 'assessments',
-      metadata: { subject: 'English FAL', grade: 'Grade 7' },
-    },
-    {
-      id: 'notif-3',
-      schoolId: activeSchool?.id,
-      type: 'RESOURCE',
-      title: 'New Knowledge Resource Uploaded',
-      message: 'Mrs. Sarah Smith uploaded "CAPS Natural Sciences Grade 5 Project Exemplar".',
-      timestamp: '3h ago',
-      isUnread: false,
-      targetTab: 'knowledge',
-      metadata: { subject: 'Natural Sciences' },
-    },
-    {
-      id: 'notif-4',
-      schoolId: activeSchool?.id,
-      type: 'ANNOUNCEMENT',
-      title: 'Term 3 Moderation Deadline',
-      message: 'Reminder: All Departmental Moderation submissions must be completed before Friday 17:00 SAST.',
-      timestamp: '1d ago',
-      isUnread: false,
-    },
-  ]);
+  const [readNotificationIds, setReadNotificationIds] = useState<string[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const currentUserRoles = getUserRoles(currentUser);
+  const isPrincipalOrAdmin = currentUserRoles.some(
+    role => role === 'SUPER_ADMIN' || role === 'SCHOOL_ADMIN' || role === 'PRINCIPAL'
+  );
+
+  const formatRelativeTime = (value?: string) => {
+    if (!value) return 'Just now';
+    const diffMs = Date.now() - new Date(value).getTime();
+    if (Number.isNaN(diffMs) || diffMs < 60_000) return 'Just now';
+    const minutes = Math.floor(diffMs / 60_000);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+  };
+
+  const latestModerationNote = (workspace: AssessmentWorkspace) =>
+    [...(workspace.moderationNotes || [])].sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    )[0];
+
+  useEffect(() => {
+    if (!activeSchool || !currentUser) {
+      setNotifications([]);
+      return;
+    }
+
+    let isMounted = true;
+    const isLeadership = currentUserRoles.some(role =>
+      ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD'].includes(role)
+    );
+
+    const buildNotifications = async () => {
+      try {
+        const workspaces = await ApiService.getAssessmentWorkspaces(activeSchool.id, {});
+        const generated: NotificationItem[] = [];
+
+        for (const workspace of workspaces) {
+          const note = latestModerationNote(workspace);
+          const isReturnedToTeacher =
+            workspace.status === 'Draft' &&
+            workspace.teacherUserId === currentUser.id &&
+            Boolean(note);
+
+          if (isReturnedToTeacher) {
+            generated.push({
+              id: `returned-${workspace.id}-${note!.id}`,
+              schoolId: activeSchool.id,
+              type: 'RETURNED',
+              title: 'Paper rejected and returned',
+              message: `${workspace.title} was returned by ${note!.authorName}. Fixes: ${note!.text}`,
+              timestamp: formatRelativeTime(note!.timestamp),
+              isUnread: !readNotificationIds.includes(`returned-${workspace.id}-${note!.id}`),
+              targetTab: 'assessments',
+              metadata: { subject: workspace.subjectName, grade: workspace.gradeName },
+            });
+          }
+
+          if (workspace.status === 'Submitted' && isLeadership) {
+            generated.push({
+              id: `submitted-${workspace.id}`,
+              schoolId: activeSchool.id,
+              type: 'WORKFLOW',
+              title: 'Paper awaiting DH moderation',
+              message: `${workspace.title} from ${workspace.teacherName || 'the teacher'} is ready for review.`,
+              timestamp: formatRelativeTime(workspace.submissionDate || workspace.updatedAt),
+              isUnread: !readNotificationIds.includes(`submitted-${workspace.id}`),
+              targetTab: 'assessments',
+              metadata: { subject: workspace.subjectName, grade: workspace.gradeName },
+            });
+          }
+
+          if (workspace.status === 'Approved' && isPrincipalOrAdmin) {
+            generated.push({
+              id: `approved-${workspace.id}`,
+              schoolId: activeSchool.id,
+              type: 'WORKFLOW',
+              title: 'Approved paper awaiting final action',
+              message: `${workspace.title} is approved. The principal can archive it or return it to the teacher if problems are found.`,
+              timestamp: formatRelativeTime(workspace.approvalDate || workspace.updatedAt),
+              isUnread: !readNotificationIds.includes(`approved-${workspace.id}`),
+              targetTab: 'assessments',
+              metadata: { subject: workspace.subjectName, grade: workspace.gradeName },
+            });
+          }
+        }
+
+        if (isMounted) setNotifications(generated);
+      } catch (error) {
+        console.error('Failed to load workflow notifications:', error);
+      }
+    };
+
+    buildNotifications();
+    const interval = window.setInterval(buildNotifications, 45_000);
+    return () => {
+      isMounted = false;
+      window.clearInterval(interval);
+    };
+  }, [activeSchool, currentUser, isPrincipalOrAdmin, readNotificationIds]);
 
   const visibleNotifications = currentUser?.role === 'SUPER_ADMIN' && !superAdminInspectingSchool
     ? notifications
@@ -87,11 +148,11 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
   const primaryColor = activeSchool?.primaryColor || '#1e3a8a';
 
   const handleMarkAllNotificationsRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, isUnread: false })));
+    setReadNotificationIds(prev => Array.from(new Set([...prev, ...visibleNotifications.map(n => n.id)])));
   };
 
   const handleMarkNotificationRead = (id: string) => {
-    setNotifications(prev => prev.map(n => (n.id === id ? { ...n, isUnread: false } : n)));
+    setReadNotificationIds(prev => (prev.includes(id) ? prev : [...prev, id]));
   };
 
   return (
@@ -191,12 +252,16 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab }) => {
           {currentUser && (
             <button
               onClick={() => setIsNotificationsOpen(true)}
-              className="relative p-2 text-slate-600 hover:text-blue-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              className={`relative p-2 rounded-xl transition-colors cursor-pointer ${
+                unreadCount > 0
+                  ? 'text-amber-700 bg-amber-50 hover:bg-amber-100 ring-1 ring-amber-200'
+                  : 'text-slate-600 hover:text-blue-600 hover:bg-slate-100'
+              }`}
               title="Notifications Center"
             >
-              <Bell className="w-4 h-4" />
+              <Bell className={`w-4 h-4 ${unreadCount > 0 ? 'animate-pulse' : ''}`} />
               {unreadCount > 0 && (
-                <span className="absolute top-1 right-1 w-4 h-4 bg-blue-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center ring-2 ring-white">
+                <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 bg-rose-600 text-white text-[10px] font-black rounded-full flex items-center justify-center ring-2 ring-white shadow-sm">
                   {unreadCount}
                 </span>
               )}

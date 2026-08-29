@@ -62,6 +62,7 @@ export const AcademicStructure: React.FC = () => {
   // Editing state for rename grade
   const [editingGradeId, setEditingGradeId] = useState<string | null>(null);
   const [editGradeName, setEditGradeName] = useState('');
+  const [newClassNames, setNewClassNames] = useState<Record<string, string>>({});
 
   // Teaching assignment form state
   const [assignTeacherId, setAssignTeacherId] = useState('');
@@ -159,6 +160,19 @@ export const AcademicStructure: React.FC = () => {
     if (!activeSchool) return;
     try {
       await ApiService.restoreGrade(activeSchool.id, gradeId);
+      loadData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleCreateClass = async (gradeId: string) => {
+    if (!activeSchool) return;
+    const className = (newClassNames[gradeId] || '').trim();
+    if (!className) return;
+    try {
+      await ApiService.createClass(activeSchool.id, gradeId, className);
+      setNewClassNames(prev => ({ ...prev, [gradeId]: '' }));
       loadData();
     } catch (err) {
       console.error(err);
@@ -514,8 +528,8 @@ export const AcademicStructure: React.FC = () => {
                     </div>
 
                     {/* Class Sections */}
-                    <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
+                    <div className="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Class Sections:</span>
                         {gradeClasses.length > 0 ? (
                           gradeClasses.map(c => (
@@ -527,6 +541,24 @@ export const AcademicStructure: React.FC = () => {
                           <span className="text-xs text-slate-400 italic">No class sections</span>
                         )}
                       </div>
+                      {!g.isArchived && (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={newClassNames[g.id] || ''}
+                            onChange={e => setNewClassNames(prev => ({ ...prev, [g.id]: e.target.value }))}
+                            placeholder="Add A, B, C..."
+                            className="w-32 px-2 py-1.5 border border-slate-300 rounded-lg text-xs text-slate-900 outline-none"
+                          />
+                          <button
+                            onClick={() => handleCreateClass(g.id)}
+                            className="p-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg"
+                            title={`Add class section to ${g.name}`}
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );

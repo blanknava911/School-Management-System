@@ -340,6 +340,16 @@ export class ApiService {
     return res.json();
   }
 
+  static async createClass(schoolId: string, gradeId: string, name: string): Promise<{ class: SchoolClass; classes: SchoolClass[] }> {
+    const res = await apiFetch(`${API_BASE}/schools/${schoolId}/grades/${gradeId}/classes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) throw new Error(await getErrorMessage(res, 'Failed to create class section'));
+    return res.json();
+  }
+
   // Curriculum Mapping Toggle
   static async toggleCurriculumMap(
     schoolId: string,
@@ -583,12 +593,13 @@ export class ApiService {
     workspaceId: string,
     status: AssessmentWorkspace['status'],
     hodUserId?: string,
-    actorUser?: User
+    actorUser?: User,
+    notes?: string
   ): Promise<AssessmentWorkspace> {
     const res = await apiFetch(`${API_BASE}/schools/${schoolId}/assessment-workspaces/${workspaceId}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status, hodUserId, actorUser }),
+      body: JSON.stringify({ status, hodUserId, actorUser, notes }),
     });
     if (!res.ok) throw new Error(await getErrorMessage(res, 'Failed to update assessment workspace status'));
     return res.json();
