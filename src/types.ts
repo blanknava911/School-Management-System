@@ -4,7 +4,6 @@ export type Role =
   | 'PRINCIPAL'
   | 'DEPUTY_PRINCIPAL'
   | 'HOD'
-  | 'GRADE_HEAD'
   | 'TEACHER';
 
 export type SchoolType = 'Primary School' | 'Secondary School' | 'Combined School' | 'Public' | 'Private' | 'Academy' | 'International' | 'Charter';
@@ -95,7 +94,6 @@ export interface Grade {
   code: string;
   order: number;
   isArchived?: boolean;
-  gradeHeadUserId?: string;
 }
 
 export interface SchoolClass {
@@ -214,7 +212,6 @@ export interface AcademicAssignment {
 export type AssessmentStatus =
   | 'Draft'
   | 'Submitted'
-  | 'Grade Head Review'
   | 'DP Review'
   | 'Approved'
   | 'Archived';

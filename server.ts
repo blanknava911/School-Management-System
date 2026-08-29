@@ -217,7 +217,7 @@ async function startServer() {
     if (mimeType) res.type(mimeType);
     res.download(absolutePath, downloadName);
   };
-  const leadershipRoles = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD', 'GRADE_HEAD'];
+  const leadershipRoles = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD'];
   const canAccessWorkspace = (actor: User, workspace: { schoolId: string; teacherUserId: string }) =>
     actor.role === 'SUPER_ADMIN' ||
     (actor.schoolId === workspace.schoolId && (leadershipRoles.includes(actor.role) || workspace.teacherUserId === actor.id));
@@ -492,10 +492,10 @@ async function startServer() {
   });
 
   // Get Users for a School (STRICT TENANT ISOLATION)
-  app.get('/api/schools/:schoolId/users', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD', 'GRADE_HEAD'), (req, res) => {
+  app.get('/api/schools/:schoolId/users', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD'), (req, res) => {
     const { schoolId } = req.params;
     const users = db.getUsers(schoolId === 'ALL' ? null : schoolId);
-    res.json(getActor(req).role === 'GRADE_HEAD' ? users.filter(user => user.role === 'TEACHER') : users);
+    res.json(users);
   });
 
   // Create User in a School
@@ -520,8 +520,7 @@ async function startServer() {
       PRINCIPAL: 3,
       DEPUTY_PRINCIPAL: 4,
       HOD: 5,
-      GRADE_HEAD: 6,
-      TEACHER: 7,
+      TEACHER: 6,
     };
 
     const userRoles: string[] = Array.isArray(roles) && roles.length > 0 ? roles : (role ? [role] : ['TEACHER']);
@@ -577,7 +576,7 @@ async function startServer() {
       if (!hod) return res.status(400).json({ error: 'Every teacher must be assigned to an active Departmental Head.' });
     }
     try {
-      const roleRanks: Record<string, number> = { SUPER_ADMIN: 1, SCHOOL_ADMIN: 2, PRINCIPAL: 3, DEPUTY_PRINCIPAL: 4, HOD: 5, GRADE_HEAD: 6, TEACHER: 7 };
+      const roleRanks: Record<string, number> = { SUPER_ADMIN: 1, SCHOOL_ADMIN: 2, PRINCIPAL: 3, DEPUTY_PRINCIPAL: 4, HOD: 5, TEACHER: 6 };
       const highestRole = [...selectedRoles].sort((a, b) => (roleRanks[a] || 99) - (roleRanks[b] || 99))[0];
       const updated = db.updateUserCredentials(target.id, target.schoolId, {
         fullName: fullName ?? target.fullName,
@@ -733,6 +732,35 @@ async function startServer() {
     }
     const grade = db.createGrade({ schoolId: req.params.schoolId, phaseId, name, code });
     res.status(201).json(grade);
+  });
+
+  app.post('/api/schools/:schoolId/grades/:gradeId/classes', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL'), (req, res) => {
+    try {
+      const { schoolId, gradeId } = req.params;
+      const actor = getActor(req);
+      const grade = db.getGrades(schoolId, true).find(item => item.id === gradeId);
+      if (!grade) return res.status(404).json({ error: 'Grade not found.' });
+      if (grade.isArchived) return res.status(409).json({ error: 'Restore this grade before adding class sections.' });
+
+      const rawName = String(req.body.name || '').trim();
+      if (!rawName) return res.status(400).json({ error: 'Class section name is required.' });
+      const className = /^[A-Za-z]$/.test(rawName) ? `${grade.name}${rawName.toUpperCase()}` : rawName;
+      const duplicate = db.getClasses(schoolId).some(
+        item => item.gradeId === gradeId && item.name.toLowerCase() === className.toLowerCase()
+      );
+      if (duplicate) return res.status(409).json({ error: `${className} already exists for ${grade.name}.` });
+
+      const schoolClass = db.createClass({ schoolId, gradeId, name: className });
+      db.addAuditLog(
+        schoolId,
+        actor,
+        'CLASS_SECTION_CREATED',
+        `${actor.fullName} added class section ${className} to ${grade.name}.`
+      );
+      res.status(201).json({ class: schoolClass, classes: db.getClasses(schoolId) });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to create class section.' });
+    }
   });
 
   app.put('/api/schools/:schoolId/grades/:gradeId', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL'), (req, res) => {
@@ -1155,7 +1183,7 @@ async function startServer() {
   });
 
   app.patch('/api/schools/:schoolId/assessment-workspaces/:workspaceId/status', (req, res) => {
-    const { status, hodUserId } = req.body;
+    const { status, hodUserId, notes } = req.body;
     const actorUser = getActor(req);
     if (!status) {
       return res.status(400).json({ error: 'Status is required' });
@@ -1166,23 +1194,81 @@ async function startServer() {
       if (!canAccessWorkspace(actorUser, existing)) return res.status(403).json({ error: 'Access denied.' });
       if (existing.status === 'Archived') return res.status(409).json({ error: 'Archived assessments are read-only.' });
 
-      const reviewRoles = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD', 'GRADE_HEAD'];
+      const reviewRoles = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD'];
       const approvalRoles = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL', 'DEPUTY_PRINCIPAL', 'HOD'];
       const archiveRoles = ['SUPER_ADMIN', 'SCHOOL_ADMIN', 'PRINCIPAL'];
+      const reviewableStatuses = ['Submitted', 'DP Review'];
+      const returnNotes = String(notes || '').trim();
       const allowed =
         (existing.status === 'Draft' && status === 'Submitted' && existing.teacherUserId === actorUser.id) ||
-        (['Submitted', 'Grade Head Review', 'DP Review'].includes(existing.status) && status === 'Draft' && reviewRoles.includes(actorUser.role)) ||
-        (['Submitted', 'Grade Head Review', 'DP Review'].includes(existing.status) && status === 'Approved' && approvalRoles.includes(actorUser.role)) ||
+        (reviewableStatuses.includes(existing.status) && status === 'Draft' && reviewRoles.includes(actorUser.role)) ||
+        (reviewableStatuses.includes(existing.status) && status === 'Approved' && approvalRoles.includes(actorUser.role)) ||
+        (existing.status === 'Approved' && status === 'Draft' && archiveRoles.includes(actorUser.role)) ||
         (existing.status === 'Approved' && status === 'Archived' && archiveRoles.includes(actorUser.role));
       if (!allowed) return res.status(409).json({ error: `Invalid assessment transition from ${existing.status} to ${status}.` });
+      if (status === 'Draft' && !returnNotes) {
+        return res.status(400).json({ error: 'Write the required fixes before returning this paper to the teacher.' });
+      }
 
-      const updated = db.updateAssessmentWorkspaceStatus(req.params.schoolId, req.params.workspaceId, status, hodUserId);
+      const now = new Date().toISOString();
+      let updated = db.updateAssessmentWorkspaceStatus(req.params.schoolId, req.params.workspaceId, status, hodUserId);
+      const historyAction = status === 'Draft'
+        ? 'Rejected and returned'
+        : status === 'Submitted'
+        ? 'Submitted for DH moderation'
+        : status === 'Approved'
+        ? 'Approved'
+        : 'Archived';
+      updated = db.updateAssessmentWorkspace(req.params.schoolId, req.params.workspaceId, {
+        submissionDate: status === 'Submitted' ? now : updated.submissionDate,
+        approvalDate: status === 'Approved' ? now : status === 'Draft' ? undefined : updated.approvalDate,
+        archiveDate: status === 'Archived' ? now : status === 'Draft' ? undefined : updated.archiveDate,
+        moderationNotes: status === 'Draft'
+          ? [
+              ...(existing.moderationNotes || []),
+              {
+                id: `mod-${Date.now()}`,
+                authorId: actorUser.id,
+                authorName: actorUser.fullName,
+                authorRole: actorUser.role,
+                text: returnNotes,
+                timestamp: now,
+              },
+            ]
+          : updated.moderationNotes,
+        approvalHistory: [
+          ...(existing.approvalHistory || []),
+          {
+            id: `hist-${Date.now()}`,
+            action: historyAction,
+            actorName: actorUser.fullName,
+            actorRole: actorUser.role,
+            timestamp: now,
+            notes: returnNotes || undefined,
+          },
+        ],
+      });
       if (actorUser) {
+        const teacher = getUserById(updated.teacherUserId);
+        const action = status === 'Draft'
+          ? 'ASSESSMENT_REJECTED'
+          : status === 'Submitted'
+          ? 'ASSESSMENT_SUBMITTED'
+          : status === 'Approved'
+          ? 'ASSESSMENT_APPROVED'
+          : 'ASSESSMENT_ARCHIVED';
+        const details = status === 'Draft'
+          ? `Assessment "${updated.title}" was rejected and returned to ${teacher?.fullName || 'the teacher'} by ${actorUser.fullName} (${actorUser.role}). Required fixes: ${returnNotes}`
+          : status === 'Submitted'
+          ? `Assessment "${updated.title}" was submitted for DH moderation by ${actorUser.fullName} (${actorUser.role}).`
+          : status === 'Approved'
+          ? `Assessment "${updated.title}" was approved by ${actorUser.fullName} (${actorUser.role}).`
+          : `Assessment "${updated.title}" was archived by ${actorUser.fullName} (${actorUser.role}).`;
         db.addAuditLog(
           req.params.schoolId,
           actorUser,
-          `ASSESSMENT_${status.toUpperCase().replace(/\s+/g, '_')}`,
-          `Assessment "${updated.title}" status changed to ${status} by ${actorUser.fullName} (${actorUser.role}).`
+          action,
+          details
         );
       }
       res.json(updated);

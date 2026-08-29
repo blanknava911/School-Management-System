@@ -423,7 +423,6 @@ export const FirstTimeSetupWizard: React.FC<FirstTimeSetupWizardProps> = ({ onCo
                     <option value="PRINCIPAL">Principal</option>
                     <option value="DEPUTY_PRINCIPAL">Deputy Principal</option>
                     <option value="HOD">HOD</option>
-                    <option value="GRADE_HEAD">Grade Head</option>
                     <option value="TEACHER">Teacher</option>
                   </select>
                   <button onClick={() => removeStaff(idx)} className="text-rose-500 hover:text-rose-700 p-1">

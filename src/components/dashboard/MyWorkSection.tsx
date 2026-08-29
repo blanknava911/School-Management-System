@@ -78,24 +78,6 @@ export const MyWorkSection: React.FC<{ setActiveTab: (tab: string) => void }> = 
       });
     }
 
-    // GRADE HEAD PRIORITIES
-    if (userRoles.includes('GRADE_HEAD')) {
-      items.push({
-        id: 'work-gh1',
-        title: 'Grade 4 Social Sciences Geography Test',
-        subject: 'Social Sciences',
-        grade: 'Grade 4',
-        phase: 'Intermediate Phase',
-        submittedBy: 'Mrs. Sarah Smith',
-        dueDate: 'Tomorrow 12:00',
-        status: 'AWAITING_REVIEW',
-        statusBadge: '3 Assessments Awaiting Grade Review',
-        badgeColor: 'bg-blue-100 text-blue-800 border-blue-200',
-        comments: 'Grade alignment and formatting check requested before HOD moderation.',
-        targetTab: 'assessments',
-      });
-    }
-
     // HOD / DP PRIORITIES
     if (userRoles.includes('HOD')) {
       items.push({

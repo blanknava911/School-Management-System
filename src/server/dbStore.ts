@@ -1354,7 +1354,7 @@ export class DatabaseStore {
     if (status === 'Submitted' && !resolvedHodId) {
       // Check AcademicAssignments / HOD Grade Assignments for this Grade
       const gradeAssignment = Array.from(this.academicAssignments.values()).find(
-        aa => aa.schoolId === schoolId && aa.gradeId === existing.gradeId && (aa.role === 'HOD' || aa.role === 'GRADE_HEAD')
+        aa => aa.schoolId === schoolId && aa.gradeId === existing.gradeId && aa.role === 'HOD'
       );
       if (gradeAssignment) {
         resolvedHodId = gradeAssignment.userId;

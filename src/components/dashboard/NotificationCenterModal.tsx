@@ -59,7 +59,7 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
   const getIcon = (type: NotificationItem['type']) => {
     switch (type) {
       case 'RETURNED':
-        return <AlertCircle className="w-4 h-4 text-amber-600" />;
+        return <AlertCircle className="w-4 h-4 text-rose-600" />;
       case 'COMMENT':
         return <MessageSquare className="w-4 h-4 text-blue-600" />;
       case 'WORKFLOW':
@@ -124,7 +124,9 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
         {/* List */}
         <div className="flex-1 overflow-y-auto divide-y divide-slate-100 p-2 space-y-1">
           {filteredNotifications.length > 0 ? (
-            filteredNotifications.map((notification) => (
+            filteredNotifications.map((notification) => {
+              const isReturnedPaper = notification.type === 'RETURNED';
+              return (
               <div
                 key={notification.id}
                 onClick={() => {
@@ -135,16 +137,20 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                   }
                 }}
                 className={`p-3 rounded-xl transition-all cursor-pointer flex items-start space-x-3 ${
-                  notification.isUnread ? 'bg-blue-50/60 font-medium' : 'hover:bg-slate-50'
+                  isReturnedPaper && notification.isUnread
+                    ? 'bg-rose-50 border border-rose-200 shadow-sm font-semibold'
+                    : notification.isUnread
+                    ? 'bg-amber-50/80 border border-amber-200 font-medium'
+                    : 'hover:bg-slate-50 border border-transparent'
                 }`}
               >
-                <div className="p-2 bg-white rounded-lg border border-slate-200 shadow-xs shrink-0 mt-0.5">
+                <div className={`p-2 bg-white rounded-lg border shadow-xs shrink-0 mt-0.5 ${isReturnedPaper ? 'border-rose-200' : 'border-slate-200'}`}>
                   {getIcon(notification.type)}
                 </div>
 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold text-slate-900 truncate">{notification.title}</h4>
+                    <h4 className="text-xs font-bold text-slate-900">{notification.title}</h4>
                     <span className="text-[10px] text-slate-400 shrink-0 ml-2">{notification.timestamp}</span>
                   </div>
                   <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">{notification.message}</p>
@@ -165,10 +171,11 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
                 </div>
 
                 {notification.isUnread && (
-                  <span className="w-2 h-2 bg-blue-600 rounded-full shrink-0 mt-1.5 animate-pulse"></span>
+                  <span className={`w-2 h-2 rounded-full shrink-0 mt-1.5 animate-pulse ${isReturnedPaper ? 'bg-rose-600' : 'bg-amber-600'}`}></span>
                 )}
               </div>
-            ))
+              );
+            })
           ) : (
             <div className="py-12 text-center text-slate-400 text-xs">
               <Bell className="w-8 h-8 text-slate-200 mx-auto mb-2" />

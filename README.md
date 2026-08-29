@@ -14,7 +14,8 @@ A multi-school workspace for staff accounts, teaching assignments, class rosters
 - Marks imports accept Excel/CSV, PDF, and images. OCR/spreadsheet matches are reviewed before saving; unmatched people require details and roster creation first.
 - Original marks files are retained in Knowledge Hub as assessment evidence.
 - Knowledge Hub and assessment workspaces now upload and serve the actual selected files, with a 15 MB limit.
-- School administrators and principals can create, edit, archive, and restore variable grades.
+- School administrators and principals can create, edit, archive, and restore variable grades and class sections.
+- Returned assessments show the teacher the reviewer fixes and write clear rejected/returned audit records.
 - Roles & Permissions is visible only to school and platform administrators. Reports & Analytics was removed.
 - Notifications are filtered to the active school, while platform administrators retain platform visibility.
 - The dashboard is compact, onboarding is skippable, and school colors apply to primary interface accents.
@@ -28,7 +29,6 @@ A multi-school workspace for staff accounts, teaching assignments, class rosters
 | `PRINCIPAL` | School-wide academic and staff oversight |
 | `DEPUTY_PRINCIPAL` | Cross-department academic oversight |
 | `HOD` | Assigned departments, teachers, grades, and moderation work |
-| `GRADE_HEAD` | Assigned grade review work |
 | `TEACHER` | Assigned subjects, classes, students, marks, and assessment drafts |
 
 Permissions are enforced on the server. Hiding a navigation item is only a usability aid.

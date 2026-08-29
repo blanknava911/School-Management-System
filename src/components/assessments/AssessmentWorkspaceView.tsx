@@ -206,13 +206,19 @@ export const AssessmentWorkspaceView: React.FC = () => {
 
   const handleUpdateStatus = async (workspaceId: string, newStatus: AssessmentWorkspace['status']) => {
     if (!activeSchool || !currentUser) return;
+    const feedback = reviewComment.trim();
+    if (newStatus === 'Draft' && !feedback) {
+      alert('Please write the fixes needed before returning this paper to the teacher.');
+      return;
+    }
     try {
       await ApiService.updateAssessmentWorkspaceStatus(
         activeSchool.id,
         workspaceId,
         newStatus,
         currentUser.id,
-        currentUser
+        currentUser,
+        feedback || undefined
       );
       if (newStatus === 'Submitted') {
         const ws = workspaces.find(w => w.id === workspaceId);
@@ -221,17 +227,25 @@ export const AssessmentWorkspaceView: React.FC = () => {
         setActionSuccess(`Assessment approved successfully! Status set to Approved (Waiting for Principal/Admin archiving).`);
       } else if (newStatus === 'Archived') {
         setActionSuccess(`Assessment archived successfully.`);
+      } else if (newStatus === 'Draft') {
+        setActionSuccess(`Assessment rejected and returned to the teacher with your fixes.`);
       } else {
         setActionSuccess(`Assessment status updated to "${newStatus}"`);
       }
+      setReviewComment('');
       setTimeout(() => setActionSuccess(null), 4000);
       loadData();
       if (selectedWorkspace && selectedWorkspace.id === workspaceId) {
-        setSelectedWorkspace({ ...selectedWorkspace, status: newStatus });
+        setSelectedWorkspace(null);
       }
     } catch (err: any) {
       alert(err.message || 'Failed to update workspace status');
     }
+  };
+
+  const handleOpenWorkspace = (workspace: AssessmentWorkspace) => {
+    setReviewComment('');
+    setSelectedWorkspace(workspace);
   };
 
   const canDeleteWorkspace = (w: AssessmentWorkspace): boolean => {
@@ -347,7 +361,7 @@ export const AssessmentWorkspaceView: React.FC = () => {
         ) : (
           filteredWorkspaces.map(w => {
             const isDraft = w.status === 'Draft';
-            const isSubmitted = w.status === 'Submitted' || w.status === 'Grade Head Review' || w.status === 'DP Review';
+            const isSubmitted = w.status === 'Submitted' || w.status === 'DP Review';
             const isApproved = w.status === 'Approved';
             const isArchived = w.status === 'Archived';
             const deletable = canDeleteWorkspace(w);
@@ -394,7 +408,7 @@ export const AssessmentWorkspaceView: React.FC = () => {
                 <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
                   <div className="flex items-center space-x-2">
                     <button
-                      onClick={() => setSelectedWorkspace(w)}
+                      onClick={() => handleOpenWorkspace(w)}
                       className="inline-flex items-center space-x-1 text-xs font-bold text-indigo-600 hover:text-indigo-800"
                     >
                       <Eye className="w-4 h-4" />
@@ -714,7 +728,26 @@ export const AssessmentWorkspaceView: React.FC = () => {
               </div>
             </div>
 
-            {/* Workflow Review Actions (DH / Grade Head / Principal) */}
+            {selectedWorkspace.moderationNotes && selectedWorkspace.moderationNotes.length > 0 && (
+              <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl space-y-2">
+                <h4 className="font-bold text-xs text-rose-900 flex items-center space-x-1.5">
+                  <AlertCircle className="w-4 h-4 text-rose-600" />
+                  <span>Returned Paper Fixes</span>
+                </h4>
+                {[...selectedWorkspace.moderationNotes]
+                  .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+                  .map(note => (
+                    <div key={note.id} className="bg-white border border-rose-100 rounded-lg p-3 text-xs text-slate-700">
+                      <div className="font-bold text-slate-900">
+                        {note.authorName} ({note.authorRole}) rejected and returned this paper
+                      </div>
+                      <p className="mt-1 whitespace-pre-wrap">{note.text}</p>
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            {/* Workflow Review Actions (DH / Principal) */}
             {canReview && (
               <div className="p-4 bg-indigo-50/50 border border-indigo-100 rounded-xl space-y-3">
                 <h4 className="font-bold text-xs text-indigo-900 flex items-center space-x-1.5">
@@ -731,17 +764,17 @@ export const AssessmentWorkspaceView: React.FC = () => {
                 />
 
                 <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
-                  {canRequestRev && selectedWorkspace.status !== 'Approved' && (
+                  {canRequestRev && selectedWorkspace.status !== 'Archived' && selectedWorkspace.status !== 'Draft' && (
                     <button
                       onClick={() => handleUpdateStatus(selectedWorkspace.id, 'Draft')}
                       className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-lg shadow-xs flex items-center space-x-1"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
-                      <span>Request Revision</span>
+                      <span>Return to Teacher</span>
                     </button>
                   )}
 
-                  {canApprove && selectedWorkspace.status !== 'Approved' && (
+                  {canApprove && ['Submitted', 'DP Review'].includes(selectedWorkspace.status) && (
                     <button
                       onClick={() => handleUpdateStatus(selectedWorkspace.id, 'Approved')}
                       className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow-xs flex items-center space-x-1"
