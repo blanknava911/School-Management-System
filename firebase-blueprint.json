@@ -125,6 +125,48 @@
         "timestamp": { "type": "string", "description": "Event timestamp" }
       },
       "relationships": []
+    },
+    "UserEngagementSession": {
+      "collectionName": "engagementSessions",
+      "title": "User Engagement Session",
+      "description": "Telemetry session recording user login, duration, interactions, and bounce status",
+      "fields": {
+        "id": { "type": "string", "description": "Session ID" },
+        "schoolId": { "type": "string", "description": "School ID" },
+        "userId": { "type": "string", "description": "Staff User ID" },
+        "userName": { "type": "string", "description": "Staff full name" },
+        "userRole": { "type": "string", "description": "User role" },
+        "loginTime": { "type": "string", "description": "Session start timestamp" },
+        "durationSeconds": { "type": "number", "description": "Session length in seconds" },
+        "interactionCount": { "type": "number", "description": "Total user interactions" },
+        "isBounced": { "type": "boolean", "description": "Whether session was low-engagement/bounce" },
+        "bounceReason": { "type": "string", "description": "Diagnostic explanation of bounce" }
+      },
+      "relationships": [
+        { "type": "many-to-one", "target": "School", "field": "schoolId" },
+        { "type": "many-to-one", "target": "User", "field": "userId" }
+      ]
+    },
+    "UserActionEvent": {
+      "collectionName": "engagementEvents",
+      "title": "User Action Event",
+      "description": "Specific user interaction event with a feature or module",
+      "fields": {
+        "id": { "type": "string", "description": "Event ID" },
+        "sessionId": { "type": "string", "description": "Session ID" },
+        "schoolId": { "type": "string", "description": "School ID" },
+        "userId": { "type": "string", "description": "Staff User ID" },
+        "featureId": { "type": "string", "description": "Feature ID" },
+        "featureName": { "type": "string", "description": "Feature display name" },
+        "category": { "type": "string", "description": "Feature category" },
+        "actionType": { "type": "string", "description": "Action type (view, create, upload, etc.)" },
+        "details": { "type": "string", "description": "Action details" },
+        "timestamp": { "type": "string", "description": "Event timestamp" }
+      },
+      "relationships": [
+        { "type": "many-to-one", "target": "School", "field": "schoolId" },
+        { "type": "many-to-one", "target": "User", "field": "userId" }
+      ]
     }
   }
 }

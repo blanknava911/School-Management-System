@@ -4,8 +4,15 @@ A multi-school workspace for staff accounts, teaching assignments, class rosters
 
 ## Current major update
 
+- **Admin-Only User Engagement & Actions Tab**: A dedicated intelligence console visible exclusively to School Administrators (`SCHOOL_ADMIN`) and Platform Super Administrators (`SUPER_ADMIN`).
+  - **Tracks Most Used Features**: Real-time frequency analysis and ranking of features with highest staff engagement (e.g. Assessment Workspaces, Class Rosters & Marks Capture, Quick Actions).
+  - **Identifies Avoided & Underutilized Features**: Pinpoints neglected tools and friction points (e.g., manual student entry, CAPS policy document downloads, curriculum matrix toggling).
+  - **Detects Low-Engagement / Bounce Sessions**: Real-time identification of staff members who log in and exit after less than 90 seconds with minimal (0–1) interactions, complete with diagnostic exit reasons, duration logs, and an in-app follow-up re-engagement modal.
+  - **Executive Product Roadmap**: Categorizes modules into *Features to Leave Be* (high adoption, stable workflows that should not be disrupted), *Features to Refine* (high-intent workflows with friction or verification hesitation), and *Features to Simplify / Promote*.
+  - **Interactive Scenario Simulator**: Built-in admin tool to simulate live user workflows (immediate bounce &lt;30s, assessment drafting & upload, HOD moderation approval, and spreadsheet marks capture) with real-time telemetry updates.
 - One email-and-password login resolves the account's school and permissions.
 - Production Firebase support covers Authentication, revoked-session checks, Firestore persistence, and Storage uploads; local development can still use generated JSON data and local files.
+  - *Project Naming*: The Firebase project display name and application branding is **School Assessment Management Platform** (hosted on Google Cloud project resource ID `hidden-indexer-pthv3`).
 - Login attempts are rate limited, disabled accounts lose active sessions, and tenant checks apply to every school route.
 - School administrators can correct staff names, emails, passwords, status, and reporting lines.
 - Every teacher must have an active Departmental Head. Replacing an HOD transfers linked teachers, departments, moderation workspaces, and grade/phase responsibilities.
@@ -16,7 +23,7 @@ A multi-school workspace for staff accounts, teaching assignments, class rosters
 - Knowledge Hub and assessment workspaces now upload and serve the actual selected files, with a 15 MB limit.
 - School administrators and principals can create, edit, archive, and restore variable grades and class sections.
 - Returned assessments show the teacher the reviewer fixes and write clear rejected/returned audit records.
-- Roles & Permissions is visible only to school and platform administrators. Reports & Analytics was removed.
+- Roles & Permissions and Engagement & Actions are visible only to school and platform administrators.
 - Notifications are filtered to the active school, while platform administrators retain platform visibility.
 - The dashboard is compact, onboarding is skippable, and school colors apply to primary interface accents.
 
@@ -82,6 +89,7 @@ src/components/students/          Rosters and reviewed marks imports
 src/components/knowledge/         Real resource uploads and downloads
 src/components/assessments/       Assessment files and moderation workflow
 src/components/users/             Staff editing, HOD assignment and replacement
+src/components/engagement/        Admin engagement intelligence, feature tracking & bounce detection
 src/components/superadmin/        School and school-admin management
 ```
 

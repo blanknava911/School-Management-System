@@ -19,6 +19,10 @@ import {
   KnowledgeResource,
   StudentRecord,
   StudentMark,
+  UserEngagementSession,
+  UserActionEvent,
+  EngagementAnalyticsSummary,
+  FeatureEngagementMetric,
 } from '../types.js';
 
 // Pre-seeded multi-tenant storage with Disk Persistence
@@ -41,6 +45,8 @@ export class DatabaseStore {
   private students: Map<string, StudentRecord> = new Map();
   private studentMarks: Map<string, StudentMark> = new Map();
   private auditLogs: AuditLog[] = [];
+  private engagementSessions: Map<string, UserEngagementSession> = new Map();
+  private userActions: Map<string, UserActionEvent> = new Map();
   private remoteSave?: (state: Record<string, unknown>) => Promise<void>;
 
   private hashPassword(password: string): string {
@@ -57,6 +63,10 @@ export class DatabaseStore {
       this.saveToDisk();
     }
     if (this.assignMissingTeacherHods()) this.saveToDisk();
+    if (this.engagementSessions.size === 0) {
+      this.seedEngagementData();
+      this.saveToDisk();
+    }
   }
 
   private assignMissingTeacherHods(): boolean {
@@ -95,6 +105,8 @@ export class DatabaseStore {
       students: Array.from(this.students.entries()),
       studentMarks: Array.from(this.studentMarks.entries()),
       auditLogs: this.auditLogs,
+      engagementSessions: Array.from(this.engagementSessions.entries()),
+      userActions: Array.from(this.userActions.entries()),
     };
   }
 
@@ -117,6 +129,8 @@ export class DatabaseStore {
     if (Array.isArray(dump.students)) this.students = new Map(dump.students);
     if (Array.isArray(dump.studentMarks)) this.studentMarks = new Map(dump.studentMarks);
     if (Array.isArray(dump.auditLogs)) this.auditLogs = dump.auditLogs;
+    if (Array.isArray(dump.engagementSessions)) this.engagementSessions = new Map(dump.engagementSessions);
+    if (Array.isArray(dump.userActions)) this.userActions = new Map(dump.userActions);
   }
 
   private saveToDisk() {
@@ -1560,6 +1574,784 @@ export class DatabaseStore {
     this.saveToDisk();
     return log;
   }
+
+  // --- ENGAGEMENT TRACKING, TELEMETRY & ACTIONS ---
+
+  public logEngagementSession(sessionData: Partial<UserEngagementSession>): UserEngagementSession {
+    const id = sessionData.id || `sess-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date().toISOString();
+    const existing = this.engagementSessions.get(id);
+
+    const user = sessionData.userId ? this.users.get(sessionData.userId) : undefined;
+    const school = (sessionData.schoolId || user?.schoolId) ? this.schools.get(sessionData.schoolId || user?.schoolId || '') : undefined;
+
+    const session: UserEngagementSession = {
+      id,
+      userId: sessionData.userId || existing?.userId || 'unknown',
+      userName: sessionData.userName || existing?.userName || user?.fullName || 'Staff Member',
+      userEmail: sessionData.userEmail || existing?.userEmail || user?.email || '',
+      userRole: sessionData.userRole || existing?.userRole || user?.role || 'TEACHER',
+      schoolId: sessionData.schoolId !== undefined ? sessionData.schoolId : (existing?.schoolId || user?.schoolId || null),
+      schoolName: school?.name || existing?.schoolName || 'School Tenant',
+      loginTime: sessionData.loginTime || existing?.loginTime || now,
+      lastActiveTime: sessionData.lastActiveTime || now,
+      durationSeconds: sessionData.durationSeconds !== undefined ? sessionData.durationSeconds : (existing?.durationSeconds || 0),
+      interactionCount: sessionData.interactionCount !== undefined ? sessionData.interactionCount : (existing?.interactionCount || 0),
+      isBounced: sessionData.isBounced !== undefined ? sessionData.isBounced : (existing?.isBounced ?? false),
+      bounceReason: sessionData.bounceReason || existing?.bounceReason,
+      exitPage: sessionData.exitPage || existing?.exitPage || 'Dashboard',
+      device: sessionData.device || existing?.device || 'Desktop / Web',
+    };
+
+    if (session.loginTime && session.lastActiveTime) {
+      const diffMs = new Date(session.lastActiveTime).getTime() - new Date(session.loginTime).getTime();
+      if (diffMs > 0 && sessionData.durationSeconds === undefined) {
+        session.durationSeconds = Math.max(session.durationSeconds, Math.round(diffMs / 1000));
+      }
+    }
+
+    if (session.interactionCount <= 2 && session.durationSeconds < 90) {
+      session.isBounced = true;
+      if (!session.bounceReason) {
+        if (session.interactionCount === 0) {
+          session.bounceReason = `Logged in and exited immediately without interacting (${session.durationSeconds}s duration)`;
+        } else {
+          session.bounceReason = `Exited from ${session.exitPage} with minimal interaction (${session.interactionCount} action, ${session.durationSeconds}s duration)`;
+        }
+      }
+    } else if (session.interactionCount > 2) {
+      session.isBounced = false;
+      session.bounceReason = undefined;
+    }
+
+    this.engagementSessions.set(id, session);
+    this.saveToDisk();
+    return session;
+  }
+
+  public updateEngagementSession(sessionId: string, updates: Partial<UserEngagementSession>): UserEngagementSession | null {
+    const existing = this.engagementSessions.get(sessionId);
+    if (!existing) return null;
+    return this.logEngagementSession({ ...existing, ...updates, id: sessionId });
+  }
+
+  public logUserActionEvent(eventData: Omit<UserActionEvent, 'id' | 'timestamp'> & { timestamp?: string }): UserActionEvent {
+    const id = `act-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const timestamp = eventData.timestamp || new Date().toISOString();
+
+    const user = this.users.get(eventData.userId);
+
+    const event: UserActionEvent = {
+      ...eventData,
+      id,
+      timestamp,
+      userName: eventData.userName || user?.fullName || 'Staff Member',
+      userRole: eventData.userRole || user?.role || 'TEACHER',
+      schoolId: eventData.schoolId !== undefined ? eventData.schoolId : (user?.schoolId || null),
+    };
+
+    this.userActions.set(id, event);
+
+    if (event.sessionId && this.engagementSessions.has(event.sessionId)) {
+      const session = this.engagementSessions.get(event.sessionId)!;
+      session.interactionCount += 1;
+      session.lastActiveTime = timestamp;
+      session.exitPage = event.featureName;
+      const diffMs = new Date(timestamp).getTime() - new Date(session.loginTime).getTime();
+      if (diffMs > 0) {
+        session.durationSeconds = Math.max(session.durationSeconds, Math.round(diffMs / 1000));
+      }
+      if (session.interactionCount > 2) {
+        session.isBounced = false;
+        session.bounceReason = undefined;
+      }
+      this.engagementSessions.set(session.id, session);
+    }
+
+    this.saveToDisk();
+    return event;
+  }
+
+  public getEngagementSummary(
+    schoolId: string | null,
+    timeframe: string = '30d',
+    roleFilter: string = 'ALL'
+  ): EngagementAnalyticsSummary {
+    const now = Date.now();
+    let cutoffMs = now - 30 * 24 * 60 * 60 * 1000;
+    if (timeframe === 'today' || timeframe === '24h') {
+      cutoffMs = now - 24 * 60 * 60 * 1000;
+    } else if (timeframe === '7d') {
+      cutoffMs = now - 7 * 24 * 60 * 60 * 1000;
+    } else if (timeframe === 'all') {
+      cutoffMs = 0;
+    }
+
+    const allSessions = Array.from(this.engagementSessions.values());
+    const filteredSessions = allSessions.filter(sess => {
+      if (schoolId !== null && sess.schoolId !== schoolId) return false;
+      if (roleFilter !== 'ALL' && sess.userRole !== roleFilter) return false;
+      const sessTime = new Date(sess.loginTime).getTime();
+      return sessTime >= cutoffMs;
+    });
+
+    const allActions = Array.from(this.userActions.values());
+    const filteredActions = allActions.filter(act => {
+      if (schoolId !== null && act.schoolId !== schoolId) return false;
+      if (roleFilter !== 'ALL' && act.userRole !== roleFilter) return false;
+      const actTime = new Date(act.timestamp).getTime();
+      return actTime >= cutoffMs;
+    });
+
+    const totalSessions = filteredSessions.length;
+    const bouncedSessions = filteredSessions.filter(s => s.isBounced);
+    const totalBounceSessions = bouncedSessions.length;
+    const bounceRatePercentage = totalSessions > 0 ? Math.round((totalBounceSessions / totalSessions) * 100) : 0;
+    const avgBounceDurationSeconds =
+      totalBounceSessions > 0
+        ? Math.round(bouncedSessions.reduce((acc, s) => acc + s.durationSeconds, 0) / totalBounceSessions)
+        : 0;
+
+    const roleBounceBreakdown: Record<string, { total: number; bounced: number; rate: number }> = {};
+    for (const s of filteredSessions) {
+      if (!roleBounceBreakdown[s.userRole]) {
+        roleBounceBreakdown[s.userRole] = { total: 0, bounced: 0, rate: 0 };
+      }
+      roleBounceBreakdown[s.userRole].total += 1;
+      if (s.isBounced) roleBounceBreakdown[s.userRole].bounced += 1;
+    }
+    for (const r in roleBounceBreakdown) {
+      const item = roleBounceBreakdown[r];
+      item.rate = item.total > 0 ? Math.round((item.bounced / item.total) * 100) : 0;
+    }
+
+    const uniqueUsers = new Set<string>();
+    filteredSessions.forEach(s => uniqueUsers.add(s.userId));
+    filteredActions.forEach(a => uniqueUsers.add(a.userId));
+
+    const FEATURE_DEFINITIONS: Array<{
+      id: string;
+      name: string;
+      category: string;
+      leaveBeReason: string;
+      refineReason: string;
+      avoidedReason: string;
+    }> = [
+      {
+        id: 'assessments_workspace',
+        name: 'Assessment Workspace & Drafting',
+        category: 'assessments',
+        leaveBeReason: 'High adoption and mission-critical teacher workflow. Keep UI structure stable to protect teacher productivity.',
+        refineReason: 'Frequent use; streamline attachment previews and auto-save indicators.',
+        avoidedReason: 'Teachers have not initiated assessments in this period; ensure grades and subjects are assigned.',
+      },
+      {
+        id: 'students_marks',
+        name: 'Class Rosters & Marks Capture',
+        category: 'students_marks',
+        leaveBeReason: 'Consistently high volume and high staff confidence. Maintain spreadsheet format compatibility.',
+        refineReason: 'Used heavily; simplify OCR mismatch verification and provide faster unassigned student onboarding.',
+        avoidedReason: 'No marks captured yet; verify if current term assessment window is active.',
+      },
+      {
+        id: 'dashboard_quick_actions',
+        name: 'Dashboard Quick Actions & Shortcuts',
+        category: 'navigation',
+        leaveBeReason: 'High frequency click-through hub for teachers and leadership. Leave prominent and compact.',
+        refineReason: 'Add dynamic badge counts to quick action cards.',
+        avoidedReason: 'Users navigating primarily via sidebar; highlight quick actions on login.',
+      },
+      {
+        id: 'moderation_review',
+        name: 'HOD / DP Moderation Workflow',
+        category: 'assessments',
+        leaveBeReason: 'Standardized approval pipeline functioning with high completion. Maintain formal audit trail.',
+        refineReason: 'Moderators frequently request revisions; refine with quick-comment templates and inline criteria checklists.',
+        avoidedReason: 'Moderation pending or bypassed; remind Department Heads of submitted drafts.',
+      },
+      {
+        id: 'academic_structure',
+        name: 'Academic Structure & Class Sections',
+        category: 'academic',
+        leaveBeReason: 'Solid structural foundation with active grade and class management. Keep existing hierarchical view.',
+        refineReason: 'Refine bulk section generation for larger primary/secondary schools.',
+        avoidedReason: 'Academic structure configured during setup and rarely revisited; expected behavior outside term transitions.',
+      },
+      {
+        id: 'user_management',
+        name: 'Staff Accounts & HOD Reporting Lines',
+        category: 'admin',
+        leaveBeReason: 'Clear multi-role and reporting line controls. Safe and reliable administration.',
+        refineReason: 'Refine batch password reset and staff onboarding invitation links.',
+        avoidedReason: 'Admin-only module; usage is naturally intermittent.',
+      },
+      {
+        id: 'knowledge_hub_resources',
+        name: 'Knowledge Hub Teaching Resources',
+        category: 'knowledge_hub',
+        leaveBeReason: 'Active sharing of lesson plans and assessments. Maintain 15 MB file upload limit and fast downloads.',
+        refineReason: 'Refine search tags and grade-specific filtering to boost resource discovery.',
+        avoidedReason: 'Underutilized repository; prompt teachers to share top exemplars after approved tests.',
+      },
+      {
+        id: 'knowledge_hub_caps',
+        name: 'Knowledge Hub CAPS Policy Documents',
+        category: 'knowledge_hub',
+        leaveBeReason: 'Reference archive available on demand.',
+        refineReason: 'Organize national CAPS files by phase with direct preview.',
+        avoidedReason: 'Staff rarely download CAPS policies; consider pre-indexing curriculum guidelines inside assessment drafts.',
+      },
+      {
+        id: 'assessment_archive',
+        name: 'Historical Assessment Archive',
+        category: 'assessments',
+        leaveBeReason: 'Retains past papers and memoranda securely.',
+        refineReason: 'Add multi-year comparative search and term-by-term export.',
+        avoidedReason: 'Historical archive rarely consulted during regular teaching weeks; anticipated annual usage pattern.',
+      },
+      {
+        id: 'manual_student_roster_entry',
+        name: 'Manual Single Student Roster Entry',
+        category: 'students_marks',
+        leaveBeReason: 'Maintained for single late-admissions.',
+        refineReason: 'Add keyboard-first rapid data entry (Enter to submit and jump to next row).',
+        avoidedReason: 'Staff strongly avoid typing learners manually, favoring Excel/CSV imports; retain bulk import as default.',
+      },
+      {
+        id: 'curriculum_map',
+        name: 'Curriculum Mapping Matrix',
+        category: 'academic',
+        leaveBeReason: 'Underlying grid connects phases, grades, and subjects.',
+        refineReason: 'Provide automated phase-based defaults to eliminate manual grid clicking.',
+        avoidedReason: 'Matrix is perceived as tedious; automate phase defaults upon school initialization.',
+      },
+      {
+        id: 'branding_settings',
+        name: 'School Branding & Theme Colors',
+        category: 'settings',
+        leaveBeReason: 'Customized school colors and badge appear throughout the platform.',
+        refineReason: 'Provide instant live color contrast checker for accessibility.',
+        avoidedReason: 'Configured once during registration; rarely edited subsequently.',
+      },
+      {
+        id: 'audit_trail',
+        name: 'School Security Audit Trail',
+        category: 'admin',
+        leaveBeReason: 'Comprehensive audit coverage for all operational events.',
+        refineReason: 'Add CSV audit export and anomaly detection filters.',
+        avoidedReason: 'Consulted mainly during administrative investigations.',
+      },
+      {
+        id: 'school_settings',
+        name: 'School Settings & Academic Calendar',
+        category: 'settings',
+        leaveBeReason: 'Calendar and term structure is well-configured.',
+        refineReason: 'Refine term rollover wizard for upcoming academic years.',
+        avoidedReason: 'Set-and-forget operational settings.',
+      },
+    ];
+
+    const featureMetrics: FeatureEngagementMetric[] = FEATURE_DEFINITIONS.map(def => {
+      const actionsForFeature = filteredActions.filter(a => a.featureId === def.id || a.featureName.toLowerCase().includes(def.name.toLowerCase().slice(0, 8)));
+      const totalInteractions = actionsForFeature.length;
+      const featureUsers = new Set(actionsForFeature.map(a => a.userId));
+      const uniqueUsersCount = featureUsers.size;
+      const avgPerUser = uniqueUsersCount > 0 ? Number((totalInteractions / uniqueUsersCount).toFixed(1)) : 0;
+      const lastAction = actionsForFeature.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+      const lastUsedAt = lastAction ? lastAction.timestamp : 'Not used in this period';
+
+      let usageTier: 'high' | 'moderate' | 'low' | 'avoided' = 'avoided';
+      let statusRecommendation: 'leave_be' | 'refine' | 'simplify_or_promote' = 'simplify_or_promote';
+      let recommendationReason = def.avoidedReason;
+
+      if (totalInteractions >= 12) {
+        usageTier = 'high';
+        statusRecommendation = 'leave_be';
+        recommendationReason = def.leaveBeReason;
+      } else if (totalInteractions >= 4) {
+        usageTier = 'moderate';
+        statusRecommendation = 'refine';
+        recommendationReason = def.refineReason;
+      } else if (totalInteractions >= 1) {
+        usageTier = 'low';
+        statusRecommendation = 'simplify_or_promote';
+        recommendationReason = def.avoidedReason;
+      } else {
+        usageTier = 'avoided';
+        statusRecommendation = 'simplify_or_promote';
+        recommendationReason = def.avoidedReason;
+      }
+
+      return {
+        featureId: def.id,
+        featureName: def.name,
+        category: def.category,
+        totalInteractions,
+        uniqueUsersCount,
+        avgPerUser,
+        lastUsedAt,
+        usageTier,
+        statusRecommendation,
+        recommendationReason,
+      };
+    });
+
+    const mostUsedFeatures = [...featureMetrics]
+      .sort((a, b) => b.totalInteractions - a.totalInteractions)
+      .slice(0, 6);
+
+    const avoidedFeatures = [...featureMetrics]
+      .filter(f => f.usageTier === 'avoided' || f.usageTier === 'low')
+      .sort((a, b) => a.totalInteractions - b.totalInteractions);
+
+    const featuresToLeaveBe = featureMetrics.filter(f => f.statusRecommendation === 'leave_be');
+    const featuresToRefine = featureMetrics.filter(f => f.statusRecommendation === 'refine');
+
+    const recentSessions = [...filteredSessions]
+      .sort((a, b) => new Date(b.loginTime).getTime() - new Date(a.loginTime).getTime())
+      .slice(0, 15);
+
+    const recentActions = [...filteredActions]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 20);
+
+    return {
+      schoolId,
+      timeframe,
+      totalInteractions: filteredActions.length,
+      totalActiveUsers: uniqueUsers.size,
+      totalSessions,
+      mostUsedFeatures,
+      avoidedFeatures,
+      featuresToLeaveBe,
+      featuresToRefine,
+      bounceStats: {
+        totalSessions,
+        totalBounceSessions,
+        bounceRatePercentage,
+        avgBounceDurationSeconds,
+        bouncedSessions: bouncedSessions.sort((a, b) => new Date(b.loginTime).getTime() - new Date(a.loginTime).getTime()).slice(0, 12),
+        roleBounceBreakdown,
+      },
+      recentSessions,
+      recentActions,
+    };
+  }
+
+  public simulateEngagementScenario(schoolId: string | null, scenario: string): EngagementAnalyticsSummary {
+    const targetSchoolId = schoolId || 'SCH-1001';
+    const schoolUsers = this.getUsers(targetSchoolId).filter(u => u.status === 'Active');
+    const teachers = schoolUsers.filter(u => (u.roles || [u.role]).includes('TEACHER'));
+    const hods = schoolUsers.filter(u => (u.roles || [u.role]).includes('HOD'));
+    const principal = schoolUsers.find(u => (u.roles || [u.role]).includes('PRINCIPAL'));
+
+    const teacher = teachers[0] || schoolUsers[0];
+    const hod = hods[0] || schoolUsers[1] || teacher;
+
+    const now = new Date();
+
+    if (scenario === 'user_bounce_immediate') {
+      const targetUser = teachers[1] || teacher;
+      const sessId = `sess-sim-bounce-${Date.now()}`;
+      const loginTime = new Date(now.getTime() - 40 * 1000).toISOString();
+      const lastActiveTime = new Date(now.getTime() - 15 * 1000).toISOString();
+
+      this.logEngagementSession({
+        id: sessId,
+        userId: targetUser.id,
+        userName: targetUser.fullName,
+        userEmail: targetUser.email,
+        userRole: targetUser.role,
+        schoolId: targetSchoolId,
+        loginTime,
+        lastActiveTime,
+        durationSeconds: 25,
+        interactionCount: 1,
+        isBounced: true,
+        exitPage: 'Dashboard',
+        bounceReason: 'Logged in, viewed Dashboard for 25s, and exited without engaging in any academic workflow.',
+        device: 'Chrome / macOS',
+      });
+
+      this.logUserActionEvent({
+        sessionId: sessId,
+        userId: targetUser.id,
+        userName: targetUser.fullName,
+        userRole: targetUser.role,
+        schoolId: targetSchoolId,
+        featureId: 'dashboard_quick_actions',
+        featureName: 'Dashboard Overview',
+        category: 'navigation',
+        actionType: 'view',
+        details: 'User viewed Dashboard, lingered for 25s, and closed browser without opening any workspace.',
+        timestamp: lastActiveTime,
+      });
+    } else if (scenario === 'teacher_assessment_upload') {
+      const sessId = `sess-sim-teacher-${Date.now()}`;
+      const loginTime = new Date(now.getTime() - 12 * 60 * 1000).toISOString();
+
+      this.logEngagementSession({
+        id: sessId,
+        userId: teacher.id,
+        userName: teacher.fullName,
+        userEmail: teacher.email,
+        userRole: teacher.role,
+        schoolId: targetSchoolId,
+        loginTime,
+        lastActiveTime: now.toISOString(),
+        durationSeconds: 720,
+        interactionCount: 5,
+        isBounced: false,
+        exitPage: 'Assessment Workspace',
+        device: 'Chrome / Windows 11',
+      });
+
+      this.logUserActionEvent({
+        sessionId: sessId,
+        userId: teacher.id,
+        userName: teacher.fullName,
+        userRole: teacher.role,
+        schoolId: targetSchoolId,
+        featureId: 'assessments_workspace',
+        featureName: 'Assessment Workspace',
+        category: 'assessments',
+        actionType: 'create',
+        details: 'Created Grade 5 Mathematics Term 3 Test Workspace',
+      });
+
+      this.logUserActionEvent({
+        sessionId: sessId,
+        userId: teacher.id,
+        userName: teacher.fullName,
+        userRole: teacher.role,
+        schoolId: targetSchoolId,
+        featureId: 'assessments_workspace',
+        featureName: 'Assessment Workspace',
+        category: 'assessments',
+        actionType: 'upload',
+        details: 'Uploaded Grade 5 Mathematics Question Paper PDF (1.4 MB)',
+      });
+
+      this.logUserActionEvent({
+        sessionId: sessId,
+        userId: teacher.id,
+        userName: teacher.fullName,
+        userRole: teacher.role,
+        schoolId: targetSchoolId,
+        featureId: 'assessments_workspace',
+        featureName: 'Assessment Workspace',
+        category: 'assessments',
+        actionType: 'upload',
+        details: 'Uploaded Memorandum & Marking Guidelines PDF',
+      });
+    } else if (scenario === 'hod_moderation_approval') {
+      const sessId = `sess-sim-hod-${Date.now()}`;
+      const loginTime = new Date(now.getTime() - 8 * 60 * 1000).toISOString();
+
+      this.logEngagementSession({
+        id: sessId,
+        userId: hod.id,
+        userName: hod.fullName,
+        userEmail: hod.email,
+        userRole: hod.role,
+        schoolId: targetSchoolId,
+        loginTime,
+        lastActiveTime: now.toISOString(),
+        durationSeconds: 480,
+        interactionCount: 4,
+        isBounced: false,
+        exitPage: 'Moderation Review',
+        device: 'Edge / Windows',
+      });
+
+      this.logUserActionEvent({
+        sessionId: sessId,
+        userId: hod.id,
+        userName: hod.fullName,
+        userRole: hod.role,
+        schoolId: targetSchoolId,
+        featureId: 'moderation_review',
+        featureName: 'Assessment Moderation Review',
+        category: 'assessments',
+        actionType: 'update',
+        details: 'Reviewed and Approved Grade 4 English Home Language Paper with moderation comments',
+      });
+    } else if (scenario === 'marks_import_workflow') {
+      const sessId = `sess-sim-marks-${Date.now()}`;
+      const loginTime = new Date(now.getTime() - 15 * 60 * 1000).toISOString();
+
+      this.logEngagementSession({
+        id: sessId,
+        userId: teacher.id,
+        userName: teacher.fullName,
+        userEmail: teacher.email,
+        userRole: teacher.role,
+        schoolId: targetSchoolId,
+        loginTime,
+        lastActiveTime: now.toISOString(),
+        durationSeconds: 900,
+        interactionCount: 6,
+        isBounced: false,
+        exitPage: 'Students & Marks',
+        device: 'Safari / macOS',
+      });
+
+      this.logUserActionEvent({
+        sessionId: sessId,
+        userId: teacher.id,
+        userName: teacher.fullName,
+        userRole: teacher.role,
+        schoolId: targetSchoolId,
+        featureId: 'students_marks',
+        featureName: 'Students & Marks Capture',
+        category: 'students_marks',
+        actionType: 'upload',
+        details: 'Uploaded Class Marks Spreadsheet (Excel .xlsx, 32 students matched)',
+      });
+
+      this.logUserActionEvent({
+        sessionId: sessId,
+        userId: teacher.id,
+        userName: teacher.fullName,
+        userRole: teacher.role,
+        schoolId: targetSchoolId,
+        featureId: 'students_marks',
+        featureName: 'Students & Marks Capture',
+        category: 'students_marks',
+        actionType: 'create',
+        details: 'Confirmed and saved 32 validated student marks to permanent register',
+      });
+    }
+
+    this.saveToDisk();
+    return this.getEngagementSummary(schoolId);
+  }
+
+  public resetEngagementData(schoolId: string | null): void {
+    if (schoolId === null) {
+      this.engagementSessions.clear();
+      this.userActions.clear();
+    } else {
+      for (const [id, sess] of this.engagementSessions.entries()) {
+        if (sess.schoolId === schoolId) this.engagementSessions.delete(id);
+      }
+      for (const [id, act] of this.userActions.entries()) {
+        if (act.schoolId === schoolId) this.userActions.delete(id);
+      }
+    }
+    this.seedEngagementData();
+    this.saveToDisk();
+  }
+
+  public seedEngagementData(): void {
+    const schoolId = 'SCH-1001';
+    const users = this.getUsers(schoolId);
+    if (users.length === 0) return;
+
+    const teacher1 = users.find(u => u.email === 'teacher@test.com') || users[2] || users[0];
+    const teacher2 = users.find(u => u.id !== teacher1.id && (u.roles || [u.role]).includes('TEACHER')) || users[1];
+    const hod = users.find(u => (u.roles || [u.role]).includes('HOD')) || users[1];
+    const admin = users.find(u => (u.roles || [u.role]).includes('SCHOOL_ADMIN')) || users[0];
+
+    const baseTime = Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    const hour = 60 * 60 * 1000;
+
+    // 1. Engaged Teacher Sessions
+    const s1 = `sess-seed-1`;
+    this.engagementSessions.set(s1, {
+      id: s1,
+      userId: teacher1.id,
+      userName: teacher1.fullName,
+      userEmail: teacher1.email,
+      userRole: teacher1.role,
+      schoolId,
+      schoolName: 'St. Augustine College',
+      loginTime: new Date(baseTime - 1 * day - 4 * hour).toISOString(),
+      lastActiveTime: new Date(baseTime - 1 * day - 3 * hour).toISOString(),
+      durationSeconds: 3600,
+      interactionCount: 14,
+      isBounced: false,
+      exitPage: 'Assessment Workspace',
+      device: 'Chrome / Windows',
+    });
+
+    const s2 = `sess-seed-2`;
+    this.engagementSessions.set(s2, {
+      id: s2,
+      userId: teacher2.id,
+      userName: teacher2.fullName,
+      userEmail: teacher2.email,
+      userRole: teacher2.role,
+      schoolId,
+      schoolName: 'St. Augustine College',
+      loginTime: new Date(baseTime - 2 * day).toISOString(),
+      lastActiveTime: new Date(baseTime - 2 * day + 45 * 60 * 1000).toISOString(),
+      durationSeconds: 2700,
+      interactionCount: 11,
+      isBounced: false,
+      exitPage: 'Students & Marks',
+      device: 'Safari / macOS',
+    });
+
+    // 2. Engaged HOD Session
+    const s3 = `sess-seed-3`;
+    this.engagementSessions.set(s3, {
+      id: s3,
+      userId: hod.id,
+      userName: hod.fullName,
+      userEmail: hod.email,
+      userRole: hod.role,
+      schoolId,
+      schoolName: 'St. Augustine College',
+      loginTime: new Date(baseTime - 3 * day).toISOString(),
+      lastActiveTime: new Date(baseTime - 3 * day + 30 * 60 * 1000).toISOString(),
+      durationSeconds: 1800,
+      interactionCount: 8,
+      isBounced: false,
+      exitPage: 'Moderation Review',
+      device: 'Edge / Windows',
+    });
+
+    // 3. Engaged Admin Session
+    const s4 = `sess-seed-4`;
+    this.engagementSessions.set(s4, {
+      id: s4,
+      userId: admin.id,
+      userName: admin.fullName,
+      userEmail: admin.email,
+      userRole: admin.role,
+      schoolId,
+      schoolName: 'St. Augustine College',
+      loginTime: new Date(baseTime - 4 * day).toISOString(),
+      lastActiveTime: new Date(baseTime - 4 * day + 25 * 60 * 1000).toISOString(),
+      durationSeconds: 1500,
+      interactionCount: 9,
+      isBounced: false,
+      exitPage: 'Academic Structure',
+      device: 'Chrome / macOS',
+    });
+
+    // 4. LOW ENGAGEMENT / BOUNCE SESSIONS (The exact problem user described)
+    const b1 = `sess-seed-b1`;
+    this.engagementSessions.set(b1, {
+      id: b1,
+      userId: teacher2.id,
+      userName: teacher2.fullName,
+      userEmail: teacher2.email,
+      userRole: teacher2.role,
+      schoolId,
+      schoolName: 'St. Augustine College',
+      loginTime: new Date(baseTime - 6 * hour).toISOString(),
+      lastActiveTime: new Date(baseTime - 6 * hour + 28 * 1000).toISOString(),
+      durationSeconds: 28,
+      interactionCount: 0,
+      isBounced: true,
+      exitPage: 'Dashboard',
+      bounceReason: 'Logged in and left immediately without interacting (28s on Dashboard).',
+      device: 'Chrome / Android Mobile',
+    });
+
+    const b2 = `sess-seed-b2`;
+    this.engagementSessions.set(b2, {
+      id: b2,
+      userId: teacher1.id,
+      userName: teacher1.fullName,
+      userEmail: teacher1.email,
+      userRole: teacher1.role,
+      schoolId,
+      schoolName: 'St. Augustine College',
+      loginTime: new Date(baseTime - 18 * hour).toISOString(),
+      lastActiveTime: new Date(baseTime - 18 * hour + 45 * 1000).toISOString(),
+      durationSeconds: 45,
+      interactionCount: 1,
+      isBounced: true,
+      exitPage: 'Knowledge Hub',
+      bounceReason: 'Exited Knowledge Hub after 45s with only 1 click (did not upload or download).',
+      device: 'Chrome / Windows',
+    });
+
+    const b3 = `sess-seed-b3`;
+    this.engagementSessions.set(b3, {
+      id: b3,
+      userId: hod.id,
+      userName: hod.fullName,
+      userEmail: hod.email,
+      userRole: hod.role,
+      schoolId,
+      schoolName: 'St. Augustine College',
+      loginTime: new Date(baseTime - 2 * day + 6 * hour).toISOString(),
+      lastActiveTime: new Date(baseTime - 2 * day + 6 * hour + 35 * 1000).toISOString(),
+      durationSeconds: 35,
+      interactionCount: 1,
+      isBounced: true,
+      exitPage: 'Dashboard Quick Actions',
+      bounceReason: 'Quick login check (35s duration, 1 interaction on Quick Actions).',
+      device: 'Safari / iPhone',
+    });
+
+    const b4 = `sess-seed-b4`;
+    this.engagementSessions.set(b4, {
+      id: b4,
+      userId: teacher2.id,
+      userName: teacher2.fullName,
+      userEmail: teacher2.email,
+      userRole: teacher2.role,
+      schoolId,
+      schoolName: 'St. Augustine College',
+      loginTime: new Date(baseTime - 5 * day).toISOString(),
+      lastActiveTime: new Date(baseTime - 5 * day + 19 * 1000).toISOString(),
+      durationSeconds: 19,
+      interactionCount: 0,
+      isBounced: true,
+      exitPage: 'Dashboard',
+      bounceReason: 'Immediate exit after login (19s duration, 0 interactions).',
+      device: 'Firefox / Linux',
+    });
+
+    // 5. Seed diverse action events
+    const featuresList = [
+      { id: 'assessments_workspace', name: 'Assessment Workspace & Drafting', count: 26, category: 'assessments' },
+      { id: 'students_marks', name: 'Class Rosters & Marks Capture', count: 21, category: 'students_marks' },
+      { id: 'dashboard_quick_actions', name: 'Dashboard Quick Actions & Shortcuts', count: 16, category: 'navigation' },
+      { id: 'moderation_review', name: 'HOD / DP Moderation Workflow', count: 12, category: 'assessments' },
+      { id: 'academic_structure', name: 'Academic Structure & Class Sections', count: 9, category: 'academic' },
+      { id: 'user_management', name: 'Staff Accounts & HOD Reporting Lines', count: 7, category: 'admin' },
+      { id: 'audit_trail', name: 'School Security Audit Trail', count: 5, category: 'admin' },
+      { id: 'knowledge_hub_resources', name: 'Knowledge Hub Teaching Resources', count: 4, category: 'knowledge_hub' },
+      // Avoided / neglected features:
+      { id: 'assessment_archive', name: 'Historical Assessment Archive', count: 2, category: 'assessments' },
+      { id: 'curriculum_map', name: 'Curriculum Mapping Matrix', count: 2, category: 'academic' },
+      { id: 'manual_student_roster_entry', name: 'Manual Single Student Roster Entry', count: 1, category: 'students_marks' },
+      { id: 'branding_settings', name: 'School Branding & Theme Colors', count: 1, category: 'settings' },
+      { id: 'knowledge_hub_caps', name: 'Knowledge Hub CAPS Policy Documents', count: 0, category: 'knowledge_hub' },
+      { id: 'school_settings', name: 'School Settings & Academic Calendar', count: 1, category: 'settings' },
+    ];
+
+    let actIdx = 1;
+    for (const item of featuresList) {
+      for (let i = 0; i < item.count; i++) {
+        const actId = `act-seed-${actIdx++}`;
+        const user = i % 2 === 0 ? teacher1 : (i % 3 === 0 ? hod : teacher2);
+        const actionTime = new Date(baseTime - (i + 1) * 6 * hour).toISOString();
+        this.userActions.set(actId, {
+          id: actId,
+          sessionId: s1,
+          userId: user.id,
+          userName: user.fullName,
+          userRole: user.role,
+          schoolId,
+          featureId: item.id,
+          featureName: item.name,
+          category: item.category as any,
+          actionType: i % 4 === 0 ? 'create' : (i % 3 === 0 ? 'upload' : (i % 2 === 0 ? 'update' : 'view')),
+          details: `Interacted with ${item.name}`,
+          timestamp: actionTime,
+        });
+      }
+    }
+  }
 }
 
 export const db = new DatabaseStore();
+

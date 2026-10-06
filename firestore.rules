@@ -81,6 +81,16 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    match /engagementSessions/{sessionId} {
+      allow read: if canManageSchool(resource.data.schoolId);
+      allow create, update, delete: if false;
+    }
+
+    match /engagementEvents/{eventId} {
+      allow read: if canManageSchool(resource.data.schoolId);
+      allow create, update, delete: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

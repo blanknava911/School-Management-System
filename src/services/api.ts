@@ -18,6 +18,9 @@ import {
   StudentMark,
   MarkImportReviewRow,
   PlatformSchoolAdmin,
+  UserEngagementSession,
+  UserActionEvent,
+  EngagementAnalyticsSummary,
 } from '../types.js';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth as firebaseAuth } from '../firebase/config';
@@ -736,6 +739,65 @@ export class ApiService {
       body: JSON.stringify({ schoolType, country }),
     });
     if (!res.ok) throw new Error('AI suggestion failed');
+    return res.json();
+  }
+
+  // --- ENGAGEMENT ANALYTICS & TELEMETRY ---
+  static async getEngagementSummary(
+    schoolId: string | null,
+    params?: { timeframe?: string; role?: string }
+  ): Promise<EngagementAnalyticsSummary> {
+    const query = new URLSearchParams();
+    if (params?.timeframe) query.set('timeframe', params.timeframe);
+    if (params?.role) query.set('role', params.role);
+    const target = schoolId ? `${API_BASE}/schools/${schoolId}/engagement-summary?${query.toString()}` : `${API_BASE}/schools/ALL/engagement-summary?${query.toString()}`;
+    const res = await apiFetch(target);
+    if (!res.ok) throw new Error(await getErrorMessage(res, 'Failed to fetch engagement analytics summary'));
+    return res.json();
+  }
+
+  static async logTelemetrySession(sessionData: Partial<UserEngagementSession>): Promise<UserEngagementSession> {
+    const res = await apiFetch(`${API_BASE}/telemetry/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sessionData),
+    });
+    if (!res.ok) throw new Error('Failed to record telemetry session');
+    return res.json();
+  }
+
+  static async logTelemetryEvent(eventData: Partial<UserActionEvent>): Promise<{ success: boolean; event: UserActionEvent }> {
+    const res = await apiFetch(`${API_BASE}/telemetry/event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(eventData),
+    });
+    if (!res.ok) throw new Error('Failed to record telemetry event');
+    return res.json();
+  }
+
+  static async simulateEngagementScenario(
+    schoolId: string | null,
+    scenario: string
+  ): Promise<EngagementAnalyticsSummary> {
+    const target = schoolId ? `${API_BASE}/schools/${schoolId}/engagement/simulate` : `${API_BASE}/schools/ALL/engagement/simulate`;
+    const res = await apiFetch(target, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenario }),
+    });
+    if (!res.ok) throw new Error(await getErrorMessage(res, 'Failed to simulate engagement scenario'));
+    return res.json();
+  }
+
+  static async resetEngagementData(schoolId: string | null): Promise<{ success: boolean; summary: EngagementAnalyticsSummary }> {
+    const target = schoolId ? `${API_BASE}/schools/${schoolId}/engagement/reset` : `${API_BASE}/schools/ALL/engagement/reset`;
+    const res = await apiFetch(target, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) throw new Error(await getErrorMessage(res, 'Failed to reset engagement data'));
     return res.json();
   }
 }

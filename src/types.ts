@@ -343,3 +343,74 @@ export interface AuthState {
   superAdminInspectingSchool: School | null; // If Super Admin switched to inspect a school
   token: string | null;
 }
+
+export interface UserEngagementSession {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  userRole: Role;
+  schoolId: string | null;
+  schoolName?: string;
+  loginTime: string; // ISO format
+  lastActiveTime: string; // ISO format
+  durationSeconds: number;
+  interactionCount: number;
+  isBounced: boolean;
+  bounceReason?: string;
+  exitPage?: string;
+  device?: string;
+}
+
+export interface UserActionEvent {
+  id: string;
+  sessionId: string;
+  userId: string;
+  userName: string;
+  userRole: Role;
+  schoolId: string | null;
+  featureId: string;
+  featureName: string;
+  category: 'assessments' | 'students_marks' | 'knowledge_hub' | 'admin' | 'navigation' | 'academic' | 'settings';
+  actionType: 'view' | 'click' | 'create' | 'update' | 'delete' | 'export' | 'upload';
+  details: string;
+  timestamp: string; // ISO format
+}
+
+export interface FeatureEngagementMetric {
+  featureId: string;
+  featureName: string;
+  category: string;
+  totalInteractions: number;
+  uniqueUsersCount: number;
+  avgPerUser: number;
+  lastUsedAt: string;
+  usageTier: 'high' | 'moderate' | 'low' | 'avoided';
+  statusRecommendation: 'leave_be' | 'refine' | 'simplify_or_promote';
+  recommendationReason: string;
+}
+
+export interface BounceAnalytics {
+  totalSessions: number;
+  totalBounceSessions: number;
+  bounceRatePercentage: number;
+  avgBounceDurationSeconds: number;
+  bouncedSessions: UserEngagementSession[];
+  roleBounceBreakdown: Record<string, { total: number; bounced: number; rate: number }>;
+}
+
+export interface EngagementAnalyticsSummary {
+  schoolId: string | null;
+  timeframe: string;
+  totalInteractions: number;
+  totalActiveUsers: number;
+  totalSessions: number;
+  mostUsedFeatures: FeatureEngagementMetric[];
+  avoidedFeatures: FeatureEngagementMetric[];
+  featuresToLeaveBe: FeatureEngagementMetric[];
+  featuresToRefine: FeatureEngagementMetric[];
+  bounceStats: BounceAnalytics;
+  recentSessions: UserEngagementSession[];
+  recentActions: UserActionEvent[];
+}
+

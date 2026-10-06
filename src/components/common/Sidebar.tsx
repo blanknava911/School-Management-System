@@ -17,6 +17,7 @@ import {
   FileText,
   FileCode,
   GraduationCap,
+  Activity,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -42,6 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
   const canAccessBranding = canEditSchoolBranding(currentUser);
   const canAccessSettings = canAccessModule(currentUser, 'school_settings');
   const canAccessAudit = canAccessModule(currentUser, 'audit_trail');
+  const canAccessEngagement = canAccessModule(currentUser, 'engagement_analytics');
 
   return (
     <aside className="w-64 bg-slate-900 text-slate-300 min-h-[calc(100vh-4rem)] flex flex-col border-r border-slate-800 shrink-0">
@@ -139,6 +141,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
               <span>Platform Audit Logs</span>
             </button>
             <button onClick={() => setActiveTab('superadmin-users')} className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md text-xs font-medium ${activeTab === 'superadmin-users' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}><Users className="h-4 w-4" /><span>School Administrators</span></button>
+            <button
+              onClick={() => setActiveTab('superadmin-engagement')}
+              className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                activeTab === 'superadmin-engagement'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-300 hover:bg-slate-800'
+              }`}
+            >
+              <Activity className="w-4 h-4" />
+              <span>Platform Engagement</span>
+            </button>
           </>
         ) : (
           /* School Context Navigation */
@@ -303,6 +316,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab }) => 
               >
                 <History className="w-4 h-4" />
                 <span>School Audit Trail</span>
+              </button>
+            )}
+
+            {canAccessEngagement && (
+              <button
+                onClick={() => setActiveTab('engagement')}
+                className={`w-full flex items-center space-x-3 px-3 py-2 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                  activeTab === 'engagement'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-slate-300 hover:bg-slate-800'
+                }`}
+                style={activeTab === 'engagement' ? { backgroundColor: primaryColor } : {}}
+              >
+                <Activity className="w-4 h-4" />
+                <span>Engagement &amp; Actions</span>
               </button>
             )}
           </>

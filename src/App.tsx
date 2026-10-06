@@ -22,6 +22,8 @@ import { AssessmentArchiveView } from './components/archive/AssessmentArchiveVie
 import { StudentsAndMarksView } from './components/students/StudentsAndMarksView';
 import { PlatformSchoolAdminManagement } from './components/superadmin/PlatformSchoolAdminManagement';
 import { EssentialsTutorial } from './components/tutorial/EssentialsTutorial';
+import { UserEngagementView } from './components/engagement/UserEngagementView';
+import { telemetry } from './services/telemetryTracker';
 
 function MainLayout() {
   const { currentUser, activeSchool, superAdminInspectingSchool, refreshSchoolData } = useAuth();
@@ -37,6 +39,14 @@ function MainLayout() {
     if (!currentUser) return setShowTutorial(false);
     setShowTutorial(!localStorage.getItem(`samp-tutorial-${currentUser.id}`));
   }, [currentUser]);
+
+  // Telemetry session initialization & tab view tracking
+  useEffect(() => {
+    if (currentUser) {
+      telemetry.initSession(currentUser, activeSchool?.id || null);
+      telemetry.trackPageView(activeTab, currentUser, activeSchool?.id || null);
+    }
+  }, [activeTab, currentUser, activeSchool]);
 
   // If user is not logged in, render the Landing Page
   if (!currentUser) {
@@ -81,6 +91,7 @@ function MainLayout() {
         return <AuditTrailView isPlatformMode={true} />;
       }
       if (activeTab === 'superadmin-users') return <PlatformSchoolAdminManagement />;
+      if (activeTab === 'superadmin-engagement') return <UserEngagementView isPlatformMode={true} />;
       return (
         <SuperAdminDashboard
           onOpenCreateSchool={() => setIsRegisterWizardOpen(true)}
@@ -116,6 +127,8 @@ function MainLayout() {
         return <SchoolSettingsView onRestartWizard={() => setShowManualSetupWizard(true)} />;
       case 'audit':
         return <AuditTrailView isPlatformMode={false} />;
+      case 'engagement':
+        return <UserEngagementView isPlatformMode={false} />;
       default:
         return <SchoolDashboard setActiveTab={setActiveTab} />;
     }

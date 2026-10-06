@@ -1404,6 +1404,77 @@ async function startServer() {
     res.json(logs);
   });
 
+  // User Engagement & Actions Analytics (Exclusively for School Admin and Super Admin)
+  app.get('/api/schools/:schoolId/engagement-summary', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN'), (req, res) => {
+    try {
+      const actor = getActor(req);
+      const schoolParam = req.params.schoolId;
+      const targetSchoolId = actor.role === 'SUPER_ADMIN'
+        ? (schoolParam === 'ALL' || schoolParam === 'PLATFORM' ? null : schoolParam)
+        : actor.schoolId!;
+      const timeframe = (req.query.timeframe as string) || '30d';
+      const roleFilter = (req.query.role as string) || 'ALL';
+
+      const summary = db.getEngagementSummary(targetSchoolId, timeframe, roleFilter);
+      res.json(summary);
+    } catch (err: any) {
+      console.error('[server] Failed to get engagement summary:', err);
+      res.status(500).json({ error: 'Failed to retrieve engagement analytics summary' });
+    }
+  });
+
+  // Client Telemetry Session Registration / Heartbeat
+  app.post('/api/telemetry/session', (req, res) => {
+    try {
+      const sessionData = req.body;
+      const session = db.logEngagementSession(sessionData);
+      res.json(session);
+    } catch (err: any) {
+      console.error('[server] Failed to record telemetry session:', err);
+      res.status(500).json({ error: 'Failed to log telemetry session' });
+    }
+  });
+
+  // Client Telemetry User Action Event Logging
+  app.post('/api/telemetry/event', (req, res) => {
+    try {
+      const eventData = req.body;
+      const event = db.logUserActionEvent(eventData);
+      res.json({ success: true, event });
+    } catch (err: any) {
+      console.error('[server] Failed to record telemetry event:', err);
+      res.status(500).json({ error: 'Failed to log telemetry action event' });
+    }
+  });
+
+  // Simulate User Engagement Journey (for Admin Testing & Verification)
+  app.post('/api/schools/:schoolId/engagement/simulate', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN'), (req, res) => {
+    try {
+      const actor = getActor(req);
+      const targetSchoolId = actor.role === 'SUPER_ADMIN' && req.params.schoolId === 'ALL' ? null : (req.params.schoolId || actor.schoolId);
+      const scenario = req.body.scenario || 'user_bounce_immediate';
+      const summary = db.simulateEngagementScenario(targetSchoolId, scenario);
+      res.json(summary);
+    } catch (err: any) {
+      console.error('[server] Failed to simulate engagement scenario:', err);
+      res.status(500).json({ error: 'Failed to simulate engagement journey' });
+    }
+  });
+
+  // Reset Engagement Telemetry
+  app.post('/api/schools/:schoolId/engagement/reset', requireRoles('SUPER_ADMIN', 'SCHOOL_ADMIN'), (req, res) => {
+    try {
+      const actor = getActor(req);
+      const targetSchoolId = actor.role === 'SUPER_ADMIN' && req.params.schoolId === 'ALL' ? null : (req.params.schoolId || actor.schoolId);
+      db.resetEngagementData(targetSchoolId);
+      const summary = db.getEngagementSummary(targetSchoolId);
+      res.json({ success: true, summary });
+    } catch (err: any) {
+      console.error('[server] Failed to reset engagement data:', err);
+      res.status(500).json({ error: 'Failed to reset engagement data' });
+    }
+  });
+
   // Platform Super Admin: Switch School Tenant Context Inspection
   app.post('/api/platform/switch-school', requireRoles('SUPER_ADMIN'), (req, res) => {
     const { targetSchoolId } = req.body;

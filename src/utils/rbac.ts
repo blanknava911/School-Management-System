@@ -13,7 +13,8 @@ export type ModuleName =
   | 'audit_trail'
   | 'roles_permissions'
   | 'school_settings'
-  | 'platform_settings';
+  | 'platform_settings'
+  | 'engagement_analytics';
 
 export interface RoleInfo {
   role: Role;
@@ -121,6 +122,9 @@ export function canAccessModule(user: User | null, module: ModuleName): boolean 
       case 'roles_permissions':
         return role === 'SUPER_ADMIN' || role === 'SCHOOL_ADMIN';
 
+      case 'engagement_analytics':
+        return role === 'SUPER_ADMIN' || role === 'SCHOOL_ADMIN';
+
       case 'school_profile':
         return (
           role === 'SUPER_ADMIN' ||
@@ -215,3 +219,8 @@ export function canViewAuditTrail(user: User | null): boolean {
 export function canManagePlatform(user: User | null): boolean {
   return hasRole(user, ['SUPER_ADMIN']);
 }
+
+export function canAccessEngagementAnalytics(user: User | null): boolean {
+  return hasRole(user, ['SUPER_ADMIN', 'SCHOOL_ADMIN']);
+}
+
